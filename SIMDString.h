@@ -1254,10 +1254,14 @@ public:
             return npos;
         }
 
+        if (n == 0) {
+            return pos;
+        }
+
         value_type* pFound = static_cast<value_type*>(memchr(m_data + pos, *s, m_length));
         size_type i = static_cast<size_type>(pFound - m_data);
 
-        while (pFound && (i + n) < m_length) {
+        while (pFound && (i + n) <= m_length) {
             if (memcmp(pFound, s, n) == 0) {
                 return i;
             }
@@ -1293,6 +1297,10 @@ public:
         size_type i = std::min(m_length - n, pos);
         value_type* leftBound = m_data + n_1;
         value_type endVal = *(s + n_1);
+
+        if (n == 0) {
+            return i;
+        }
 
         do {
             if (*(leftBound + i) == endVal && !memcmp(m_data + i, s, n)) {

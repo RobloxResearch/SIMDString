@@ -151,15 +151,6 @@ TEST(SIMDStringTest, Assign)
   simdstring0.assign(string3.c_str());
   EXPECT_EQ(simdstring0.size(), string3.size());
   EXPECT_STREQ(simdstring0.c_str(), string3.c_str());
-
-  // std::string string1(sampleString);
-  // simdstring0.assign(string1, 34);
-  // EXPECT_EQ(simdstring0.size(), 3);
-  // EXPECT_STREQ(simdstring0.c_str(), "dog");
-
-  // simdstring0.assign(string1, 4, 5);
-  // EXPECT_EQ(simdstring0.size(), 5);
-  // EXPECT_STREQ(simdstring0.c_str(), "brown");
 }
 
 TEST(SIMDStringTest, Access)
@@ -349,7 +340,6 @@ TEST(SIMDStringTest, PushPopBack)
 
 TEST(SIMDStringTest, Insert)
 {
-
   std::string string1("0123456789");
   std::string string2("abcdefg");
 
@@ -392,7 +382,6 @@ TEST(SIMDStringTest, Insert)
 
 TEST(SIMDStringTest, Replace)
 {
-
   std::string string1("0123456789");
   std::string string2("abcdefg");
 
@@ -438,7 +427,6 @@ TEST(SIMDStringTest, Replace)
   EXPECT_STREQ(string1.replace(10, 5, 2, 'd').c_str(), simdstring1.replace(10, 5, 2, 'd').c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
 
-
   EXPECT_STREQ(string1.replace(5, 5, "hijklmnop", 5).c_str(), simdstring1.replace(5, 5, "hijklmnop", 5).c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
   EXPECT_STREQ(string1.replace(5, 5, 5, 'z').c_str(), simdstring1.replace(5, 5, 5, 'z').c_str());
@@ -470,7 +458,6 @@ TEST(SIMDStringTest, ClearErase)
   EXPECT_EQ(simdstring1.length(), 0);
   EXPECT_STREQ(simdstring1.c_str(), "");
   EXPECT_TRUE(simdstring1.empty());
-
 
   SIMDString simdstring2(sampleString);
   simdstring2.clear();
@@ -521,9 +508,11 @@ TEST(SIMDStringTest, Find)
 
   EXPECT_EQ(string1.find("abcd"), simdstring1.find("abcd"));
   EXPECT_EQ(string1.find("abcabcabcabcabcabcabcdabcabcabcabcasdf"), simdstring1.find("abcabcabcabcabcabcabcdabcabcabcabcasdf"));
+  EXPECT_EQ(string1.find("abcabcabcabcabcabcabcdabcabcabcabc"), simdstring1.find("abcabcabcabcabcabcabcdabcabcabcabc"));
   EXPECT_EQ(string1.find('d'), simdstring1.find('d'));
   EXPECT_EQ(string2.find("ab"), simdstring2.find("ab"));
   EXPECT_EQ(string3.find(string4), simdstring3.find(simdstring4));
+  EXPECT_EQ(string3.find("", 6), simdstring3.find("", 6));
 
   SIMDString simdstring5; 
   std::string string5; 
@@ -547,10 +536,17 @@ TEST(SIMDStringTest, RFind)
   EXPECT_EQ(string1.rfind("abcd"), simdstring1.rfind("abcd"));
   EXPECT_EQ(string1.rfind("abcd", 10), simdstring1.rfind("abcd", 10));
   EXPECT_EQ(string1.rfind("abcabcabcabcabcabcabcdabcabcabcabcasdf"), simdstring1.rfind("abcabcabcabcabcabcabcdabcabcabcabcasdf"));
+  EXPECT_EQ(string1.rfind("abcabcabcabcabcabcabcdabcabcabcabc"), simdstring1.rfind("abcabcabcabcabcabcabcdabcabcabcabc"));
   EXPECT_EQ(string1.rfind('d'), simdstring1.rfind('d'));
   EXPECT_EQ(string1.rfind('e'), simdstring1.rfind('e'));
   EXPECT_EQ(string2.rfind("ab"), simdstring2.rfind("ab"));
   EXPECT_EQ(string3.rfind(string4), simdstring3.rfind(simdstring4));
+  EXPECT_EQ(string3.rfind("", 6), simdstring3.rfind("", 6));
+
+  SIMDString simdstring5; 
+  std::string string5; 
+
+  EXPECT_EQ(string5.rfind("abcd"), simdstring5.rfind("abcd"));
 }
 
 TEST(SIMDStringTest, FindFirstLastOf)
@@ -587,11 +583,13 @@ TEST(SIMDStringTest, FindFirstLastOf)
   EXPECT_EQ(string1.find_last_of('?'), simdstring1.find_last_of('?'));
   EXPECT_EQ(string1.find_last_of("1234"), simdstring1.find_last_of("1234"));
 
-
   EXPECT_EQ(string1.find_first_of('?', 90), simdstring1.find_first_of('?', 90));
   EXPECT_EQ(string1.find_first_of("1234", 90), simdstring1.find_first_of("1234", 90));
   EXPECT_EQ(string1.find_last_of('?', 90), simdstring1.find_last_of('?', 90));
   EXPECT_EQ(string1.find_last_of("1234", 90), simdstring1.find_last_of("1234", 90));
+
+  EXPECT_EQ(string1.find_first_of("", 90), simdstring1.find_first_of("", 90));
+  EXPECT_EQ(string1.find_last_of("", 90), simdstring1.find_last_of("", 90));
 }
 
 TEST(SIMDStringTest, FindFirstLastNotOf)
@@ -638,6 +636,8 @@ TEST(SIMDStringTest, FindFirstLastNotOf)
   EXPECT_EQ(string2.find_last_not_of('?', 90), simdstring2.find_last_not_of('?', 90));
   EXPECT_EQ(string2.find_last_not_of("1234", 90), simdstring2.find_last_not_of("1234", 90));
 
+  EXPECT_EQ(string2.find_first_not_of("", 90), simdstring2.find_first_not_of("", 90));
+  EXPECT_EQ(string2.find_last_not_of("", 90), simdstring2.find_last_not_of("", 90));
 }
 
 TEST(SIMDStringTest, StartsEndsWith)
@@ -734,16 +734,13 @@ TEST(SIMDStringTest, Conversions)
   string1 = std::to_string(1234567890ull);
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
 
-
   simdstring1 = to_string(0X1.BC70A3D70A3D7P+6f);
   string1 = std::to_string(0X1.BC70A3D70A3D7P+6f);
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
 
-
   simdstring1 = to_string(0X1.BC70A3D70A3D7P+6);
   string1 = std::to_string(0X1.BC70A3D70A3D7P+6);
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
-
 
   simdstring1 = to_string(0X1.BC70A3D70A3D7P+6l);
   string1 = std::to_string(0X1.BC70A3D70A3D7P+6l);
@@ -823,7 +820,6 @@ TEST(SIMDStringTest, IO){
   oss2 << string1; 
   EXPECT_STREQ(oss1.str().c_str(), oss2.str().c_str());
 }
-
 
 TEST(SIMDStringTest, CompileError){
   SIMDString<32> simdstring1;
