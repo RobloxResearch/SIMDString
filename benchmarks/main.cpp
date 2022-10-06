@@ -20,9 +20,6 @@
 
 
 int main(int argc, const char* argv[]) {
-
-    if (::benchmark::ReportUnrecognizedArguments(argc, argv)) return 1;
-
     // __VA_ARGS_ is necessary because type templating messes up Macro argument parsing
 #   define REGISTER_CLASS_BENCHMARKS(...) RegisterBenchmarks<__VA_ARGS__>(#__VA_ARGS__)
 
@@ -46,6 +43,7 @@ int main(int argc, const char* argv[]) {
 
     // Run benchmarks
     ::benchmark::Initialize(&argc, argv);
+    if (::benchmark::ReportUnrecognizedArguments(argc, argv)) return 1;
     ::benchmark::RunSpecifiedBenchmarks();
     ::benchmark::Shutdown();
 

@@ -10,11 +10,9 @@
 // https://github.com/llvm/llvm-project/blob/main/libcxx/benchmarks/string.bench.cpp
 ////////////////////////////////////////////////////////////////////////////////////////
 
-
 constexpr std::size_t MAX_STRING_LEN = 1 << 21;
 #define CONST_C_STR "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras finibus pellentesque magna vel ultrices. Nulla nisl ipsum, dapibus ac ullamcorper vel, lacinia at massa. Pellentesque eget ipsum volutpat."
 #define CONST_C_STR_SIZE 201
-
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Constructor Benchmark Definitions
@@ -79,7 +77,6 @@ static void BM_ConstCstrCopyConstruct(benchmark::State& state)
         benchmark::DoNotOptimize(s2);
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Assignment Operator Benchmark Definitions
@@ -448,6 +445,15 @@ static void BM_Cstr(benchmark::State& state)
         benchmark::DoNotOptimize(s1.c_str());
 }
 
+////////////////////////////////////////////////////////////////////////////////////////
+// Access
+template<class Str>
+static void BM_ConstCStrAt(benchmark::State& state)
+{
+    Str s1(CONST_C_STR);
+    for (auto _ : state)
+        benchmark::DoNotOptimize(s1.at(CONST_C_STR_SIZE/2) = 'a');
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // IO
@@ -481,6 +487,19 @@ static void BM_Out(benchmark::State& state)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
+// Swap
+template<class Str>
+static void BM_Swap(benchmark::State& state)
+{
+    Str s1(state.range(0), '*');
+    Str s2(state.range(0), '-');
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(s2);
+        s2.swap(s1);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
 // This is where the benchmarks are programmatically registered .
 void RegisterBenchmarks(const char* classname) {
     // buffer for formatting the benchmark name string into RegisterBenchmark
@@ -490,17 +509,16 @@ void RegisterBenchmarks(const char* classname) {
 #   define REGISTER_BENCHMARK(fun) sprintf(buffer, "%s<%s>", #fun, classname);\
         benchmark::RegisterBenchmark(buffer, fun<Str>)\
 
-
     REGISTER_BENCHMARK(BM_CtorDefault);
-    REGISTER_BENCHMARK(BM_Ctor)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(62)->Arg(MAX_STRING_LEN);
-    REGISTER_BENCHMARK(BM_CstrConstruct)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(62)->Arg(MAX_STRING_LEN);
+    REGISTER_BENCHMARK(BM_Ctor)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(63)->Arg(MAX_STRING_LEN);
+    REGISTER_BENCHMARK(BM_CstrConstruct)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(63)->Arg(MAX_STRING_LEN);
     REGISTER_BENCHMARK(BM_ConstCStrConstruct);
-    REGISTER_BENCHMARK(BM_CopyConstruct)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(62)->Arg(MAX_STRING_LEN);
+    REGISTER_BENCHMARK(BM_CopyConstruct)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(63)->Arg(MAX_STRING_LEN);
     REGISTER_BENCHMARK(BM_ConstCstrCopyConstruct);
 
     ////////////////////////////////////////////////////////////////////////////////////
-    REGISTER_BENCHMARK(BM_Assign)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(MAX_STRING_LEN);
-    REGISTER_BENCHMARK(BM_AssignCstr)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(MAX_STRING_LEN);
+    REGISTER_BENCHMARK(BM_Assign)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(63)->Arg(MAX_STRING_LEN);
+    REGISTER_BENCHMARK(BM_AssignCstr)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(63)->Arg(MAX_STRING_LEN);
     REGISTER_BENCHMARK(BM_AssignConstCstr);
 
     ////////////////////////////////////////////////////////////////////////////////////
@@ -512,7 +530,6 @@ void RegisterBenchmarks(const char* classname) {
     REGISTER_BENCHMARK(BM_CstrAppend)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(MAX_STRING_LEN - CONST_C_STR_SIZE);
     REGISTER_BENCHMARK(BM_CstrAppendOperator)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(MAX_STRING_LEN - CONST_C_STR_SIZE);
     REGISTER_BENCHMARK(BM_CstrAppendOperatorTwice)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(MAX_STRING_LEN - (2 * CONST_C_STR_SIZE));
-
 
     ////////////////////////////////////////////////////////////////////////////////////
     REGISTER_BENCHMARK(BM_InsertToEmpty)->Arg(0)->RangeMultiplier(4)->Range(1, 1024)->Arg(MAX_STRING_LEN);
@@ -554,12 +571,14 @@ void RegisterBenchmarks(const char* classname) {
     ////////////////////////////////////////////////////////////////////////////////////
     REGISTER_BENCHMARK(BM_Empty)->Arg(0)->Arg(MAX_STRING_LEN);
     REGISTER_BENCHMARK(BM_Cstr)->Arg(0)->Arg(MAX_STRING_LEN);
+    REGISTER_BENCHMARK(BM_ConstCStrAt);
+    REGISTER_BENCHMARK(BM_Swap)->Arg(MAX_STRING_LEN);
 
     ////////////////////////////////////////////////////////////////////////////////////
     REGISTER_BENCHMARK(BM_In)->Arg(0)->Arg(MAX_STRING_LEN);
     REGISTER_BENCHMARK(BM_Getline)->Arg(0)->Arg(MAX_STRING_LEN);
     REGISTER_BENCHMARK(BM_Out)->Arg(0)->Arg(MAX_STRING_LEN);
-
+    
 #undef REGISTER_BENCHMARK
 };
 

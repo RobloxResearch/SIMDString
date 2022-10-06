@@ -35,7 +35,6 @@ SOFTWARE.
 #include <limits>
 #include <ios>
 #include <iostream>
-
 #include <string_view>
 #include <initializer_list>
 
@@ -145,17 +144,34 @@ protected:
     }
 
     /** Requires 128-bit alignment */
+    inline static void swapBuffer(void* buf1, void* buf2) {
+#       if USE_SSE_MEMCPY
+            // Can assume that INTERNAL_SIZE % SSO_ALIGNMENT == 0 because of the static assertion on line 115
+            __m128i* d = reinterpret_cast<__m128i*>(buf1);
+            __m128i* s = reinterpret_cast<__m128i*>(buf2);
+
+            for (int i = 0; i < INTERNAL_SIZE/SSO_ALIGNMENT; ++i) {
+                __m128i tmp = d[i];
+                d[i] = s[i];
+                s[i] = tmp;
+            }
+#       else
+            std::swap(buf1, buf2);
+#       endif
+    }
+
+    /** Requires 128-bit alignment */
     inline static void memcpyBuffer(void* dst, const void* src, size_t count = INTERNAL_SIZE) {
 #       if USE_SSE_MEMCPY
-        // Can assume that INTERNAL_SIZE % SSO_ALIGNMENT == 0 because of the static assertion on line 116
-        __m128i* d = reinterpret_cast<__m128i*>(dst);
-        const __m128i* s = reinterpret_cast<const __m128i*>(src);
-        int iterations = count/SSO_ALIGNMENT;
-        for (int i = 0; i < iterations; ++i) {
-            d[i] = s[i];
-        }
+            // Can assume that INTERNAL_SIZE % SSO_ALIGNMENT == 0 because of the static assertion on line 115
+            __m128i* d = reinterpret_cast<__m128i*>(dst);
+            const __m128i* s = reinterpret_cast<const __m128i*>(src);
+            int iterations = (int) (count/SSO_ALIGNMENT);
+            for (int i = 0; i < iterations; ++i) {
+                d[i] = s[i];
+            }
 #       else
-        ::memcpy(dst, src, count);
+            ::memcpy(dst, src, count);
 #       endif
     }
 
@@ -178,23 +194,27 @@ protected:
         return !m_allocated && m_data;
     }
 
-    /** Choose the number of bytes to allocate to hold a string of length L */
+    /** Choose the number of bytes to allocate to hold a string of length L 
+     *  Note: Calling functions are expected to +1 for the null terminator */
     constexpr inline static size_t chooseAllocationSize(size_t L) {
         // Avoid allocating more than internal size unless required, but always allocate at least the internal size
-        return (L + 1 <= INTERNAL_SIZE) ? INTERNAL_SIZE : std::max((size_t)(2 * L + 1), (size_t)64);
+        return (L <= INTERNAL_SIZE) ? INTERNAL_SIZE : std::max((size_t)(2 * L + 1), (size_t)64);
     }
 
     constexpr void prepareToMutate() {
         if (inConst()) {
             const value_type* old = m_data;
-            m_allocated = chooseAllocationSize(m_length);
+            m_allocated = chooseAllocationSize(m_length + 1);
             m_data = (value_type*)alloc(m_allocated);
             memcpy(m_data, old, m_length + 1);
         }
     }
 
+    /** Ensure enough bytes are allocated to hold a string of length newSize
+     *  and copies the old string over
+     *  Note: Calling functions are expected to +1 for the null terminator */
     constexpr void ensureAllocation(size_t newSize) {
-        if ((m_allocated < newSize + 1) && !((m_data == m_buffer) && (newSize < INTERNAL_SIZE))) {
+        if ((m_allocated < newSize) && !((m_data == m_buffer) && (newSize < INTERNAL_SIZE))) {
             value_type* old = m_data;
             size_t oldSize = m_allocated;
             m_allocated = chooseAllocationSize(newSize);
@@ -213,6 +233,8 @@ protected:
         }
     }
 
+    /** Ensure enough bytes are allocated to hold a string of length newSize.
+     *  Note: Calling functions are expected to +1 for the null terminator */
     constexpr inline void maybeReallocate(size_t newSize) {
         // Don't waste an allocation if the memory already allocated is large enough to hold the new data
         if (m_allocated && m_allocated >= newSize) {
@@ -502,8 +524,8 @@ public:
         return *this;
     }
 
-    constexpr SIMDString& assign(const value_type* s, size_type n) {
-        m_length = n;
+    constexpr SIMDString& assign(const value_type* s, size_type count) {
+        m_length = count;
         // free and/or allocate memory if necessary. 
         maybeReallocate(m_length + 1);
 
@@ -517,8 +539,8 @@ public:
         return (*this = s);
     }
 
-    constexpr SIMDString& assign(size_type n, const value_type c) {
-        m_length = n;
+    constexpr SIMDString& assign(size_type count, const value_type c) {
+        m_length = count;
         // free and/or allocate memory if necessary. 
         maybeReallocate(m_length + 1);
 
@@ -587,6 +609,7 @@ public:
 
     constexpr reference operator[](size_type x) {
         assert(x < m_length&& x >= 0); // "Index out of bounds");
+        prepareToMutate();
         return m_data[x];
     }
 
@@ -597,6 +620,7 @@ public:
 
     constexpr reference at(size_type x) {
         assert(x < m_length&& x >= 0); // "Index out of bounds");
+        prepareToMutate();
         return m_data[x];
     }
 
@@ -605,8 +629,9 @@ public:
         return m_data[0];
     }
 
-    constexpr reference front(size_type x) {
+    constexpr reference front() {
         assert(m_data); // "Empty string"
+        prepareToMutate();
         return m_data[0];
     }
 
@@ -615,12 +640,13 @@ public:
         return m_data[m_length - 1];
     }
 
-    constexpr reference back(size_type x) {
+    constexpr reference back() {
         assert(m_data); // "Empty string"
+        prepareToMutate();
         return m_data[m_length - 1];
     }
 
-    constexpr inline operator std::basic_string_view<value_type>() {
+    explicit constexpr inline operator std::basic_string_view<value_type>() {
         return std::string_view(m_data, m_length);
     }
 
@@ -725,10 +751,10 @@ public:
     }
 
     constexpr void shrink_to_fit() {
-        if (m_allocated != m_length) {
+        if (m_allocated != m_length + 1) {
             value_type* old = m_data;
             size_type oldSize = m_allocated;
-            m_allocated = chooseAllocationSize(m_length);
+            m_allocated = chooseAllocationSize(m_length + 1);
             m_data = (value_type*)alloc(m_allocated);
             memcpy(m_data, old, m_length);
             if (!::inConstSegment(old)) { free(old, oldSize); }
@@ -756,18 +782,18 @@ public:
         return replace(pos, 0, s, ::strlen(s));
     }
 
-    constexpr SIMDString& insert(size_type pos, const value_type* s, size_type n) {
+    constexpr SIMDString& insert(size_type pos, const value_type* s, size_type count) {
         if (pos == m_length) {
-            return append(s, n);
+            return append(s, count);
         }
-        return replace(pos, 0, s, n);
+        return replace(pos, 0, s, count);
     }
 
-    constexpr SIMDString& insert(size_type pos, size_type n, value_type c) {
+    constexpr SIMDString& insert(size_type pos, size_type count, value_type c) {
         if (pos == m_length) {
-            return append(n, c);
+            return append(count, c);
         }
-        return replace(pos, 0, n, c);
+        return replace(pos, 0, count, c);
     }
 
     constexpr iterator insert(const_iterator pos, value_type c) {
@@ -841,11 +867,11 @@ public:
             return append(s, count2);
         }
 
-        long sizeDiff = count2 - count;
+        long sizeDiff = (long) (count2 - count);
 
         if (sizeDiff > 0) { // count < count2 -> insert
-            size_type newSize = m_length + sizeDiff;
-            if (((m_allocated < newSize + 1) && !((m_data == m_buffer) && (newSize < INTERNAL_SIZE))) || inConst()) {
+            size_type newSize = m_length + sizeDiff + 1;
+            if (((m_allocated < newSize) && !((m_data == m_buffer) && (newSize <= INTERNAL_SIZE))) || inConst()) {
                 // Allocate a new string and copy over first n values
                 value_type* old = m_data;
                 size_type oldSize = m_allocated;
@@ -911,11 +937,11 @@ public:
             return append(count2, c);
         }
 
-        long sizeDiff = count2 - count;
+        long sizeDiff = (long) (count2 - count);
 
         // count < count2
         if (sizeDiff > 0) { 
-            size_type newSize = m_length + sizeDiff;
+            size_type newSize = m_length + sizeDiff + 1;
             if (((m_allocated < newSize + 1) && !((m_data == m_buffer) && (newSize < INTERNAL_SIZE))) || inConst()) {
                 // Allocate a new string and copy over first n values
                 value_type* old = m_data;
@@ -1000,7 +1026,7 @@ public:
         else if (count > 0) {
             if (inConst()) {
                 const value_type* old = m_data;
-                m_allocated = chooseAllocationSize(m_length - count);
+                m_allocated = chooseAllocationSize(m_length - count + 1);
                 m_data = (value_type*)alloc(m_allocated);
                 // copy over [old, old + pos)
                 memcpy(m_data, old, pos);
@@ -1037,9 +1063,16 @@ public:
     constexpr SIMDString operator+(const SIMDString& str) const {
         SIMDString result;
         result.m_length = m_length + str.m_length;
-        result.m_allocated = chooseAllocationSize(result.m_length);
+        result.m_allocated = chooseAllocationSize(result.m_length + 1);
         result.m_data = (value_type*)result.alloc(result.m_allocated);
-        memcpy(result.m_data, m_data, m_length);
+        
+        if ((result.m_data == result.m_buffer) && (m_data == m_buffer)) {
+            memcpyBuffer(result.m_data, m_data);
+        }
+        else {
+            memcpy(result.m_data, m_data, m_length);
+        }
+
         memcpy(result.m_data + m_length, str.m_data, str.m_length + 1);
         return result;
     }
@@ -1048,7 +1081,7 @@ public:
         const size_type L(::strlen(s));
         SIMDString result;
         result.m_length = m_length + L;
-        result.m_allocated = chooseAllocationSize(result.m_length);
+        result.m_allocated = chooseAllocationSize(result.m_length + 1);
         result.m_data = (value_type*)result.alloc(result.m_allocated);
 
         // Copy this to output string
@@ -1065,10 +1098,9 @@ public:
     }
 
     constexpr SIMDString operator+(const value_type c) const {
-        const size_type L(1);
         SIMDString result;
-        result.m_length = m_length + L;
-        result.m_allocated = chooseAllocationSize(result.m_length);
+        result.m_length = m_length + 1;
+        result.m_allocated = chooseAllocationSize(result.m_length + 1);
         result.m_data = (value_type*)result.alloc(result.m_allocated);
 
         if ((result.m_data == result.m_buffer) && (m_data == m_buffer)) {
@@ -1083,7 +1115,7 @@ public:
     }
 
     constexpr SIMDString& operator+=(const SIMDString& str) {
-        ensureAllocation(m_length + str.m_length);
+        ensureAllocation(m_length + str.m_length + 1);
         memcpy(m_data + m_length, str.m_data, str.m_length + 1);
         m_length += str.m_length;
         return *this;
@@ -1099,7 +1131,7 @@ public:
 
     constexpr SIMDString& operator+=(const value_type* s) {
         const size_type t = ::strlen(s);
-        ensureAllocation(m_length + t);
+        ensureAllocation(m_length + t + 1);
         memcpy(m_data + m_length, s, t + 1);
         m_length += t;
         return *this;
@@ -1123,7 +1155,7 @@ public:
 
     constexpr SIMDString& append(const SIMDString& str, size_type pos, size_type count = npos) {
         size_type copy_len = (count == npos || pos + count >= str.size()) ? str.size() - pos : count;
-        ensureAllocation(m_length + copy_len);
+        ensureAllocation(m_length + copy_len + 1);
         memcpy(m_data + m_length, str.m_data + pos, copy_len);
         m_data[m_length += copy_len] = '\0';
         return *this;
@@ -1133,16 +1165,16 @@ public:
         return (*this += str);
     }
 
-    constexpr SIMDString& append(size_type n, value_type c) {
-        ensureAllocation(m_length + n);
-        ::memset(m_data + m_length, c, n);
-        m_length += n;
+    constexpr SIMDString& append(size_type count, value_type c) {
+        ensureAllocation(m_length + count + 1);
+        ::memset(m_data + m_length, c, count);
+        m_length += count;
         m_data[m_length] = '\0';
         return *this;
     }
 
     constexpr SIMDString& append(const value_type* s, size_type t) {
-        ensureAllocation(m_length + t);
+        ensureAllocation(m_length + t + 1);
         memcpy(m_data + m_length, s, t);
         m_length += t;
         m_data[m_length] = '\0';
@@ -1184,9 +1216,9 @@ public:
         else if (str.m_data != str.m_buffer) {
             m_data = str.m_data;
             str.m_data = str.m_buffer;
-        } // if both store strings in buffer, don't swap m_data
+        } // if both store strings in buffer, don't swap m_data, otherwise swapping buffers will swap it back
 
-        std::swap<value_type >(m_buffer, str.m_buffer);
+        swapBuffer(m_buffer, str.m_buffer);
         std::swap<size_type>(m_length, str.m_length);
     }
 
@@ -1199,7 +1231,7 @@ public:
     }
 
     constexpr bool starts_with(std::string_view sv) const {
-        return memcmp(sv.begin(), m_data, sv.size()) == 0;
+        return memcmp(sv.data(), m_data, sv.size()) == 0;
     }
 
     constexpr bool ends_with(value_type c) const {
@@ -1212,7 +1244,7 @@ public:
     }
 
     constexpr bool ends_with(std::string_view sv) const {
-        return memcmp(sv.begin(), m_data + m_length - sv.size(), sv.size()) == 0;
+        return memcmp(sv.data(), m_data + m_length - sv.size(), sv.size()) == 0;
     }
 
     constexpr SIMDString substr(size_type pos, size_type count = npos) const {
@@ -1248,21 +1280,21 @@ public:
         return find(s, pos, ::strlen(s));
     }
 
-    constexpr size_type find(const value_type* s, size_type pos, size_type n) const
+    constexpr size_type find(const value_type* s, size_type pos, size_type count) const
     {
-        if (pos + n > m_length) {
+        if (pos + count > m_length) {
             return npos;
         }
 
-        if (n == 0) {
+        if (count == 0) {
             return pos;
         }
 
         value_type* pFound = static_cast<value_type*>(memchr(m_data + pos, *s, m_length));
         size_type i = static_cast<size_type>(pFound - m_data);
 
-        while (pFound && (i + n) <= m_length) {
-            if (memcmp(pFound, s, n) == 0) {
+        while (pFound && (i + count) <= m_length) {
+            if (memcmp(pFound, s, count) == 0) {
                 return i;
             }
             pFound = static_cast<value_type*>(memchr(pFound + 1, *s, m_length));
@@ -1288,22 +1320,22 @@ public:
         return rfind(s, pos, ::strlen(s));
     }
 
-    constexpr size_type rfind(const value_type* s, size_type pos, size_type n) const {
-        if (n > m_length) {
+    constexpr size_type rfind(const value_type* s, size_type pos, size_type count) const {
+        if (count > m_length) {
             return npos;
         }
 
-        size_type n_1 = n - 1;
-        size_type i = std::min(m_length - n, pos);
+        size_type n_1 = count - 1;
+        size_type i = std::min(m_length - count, pos);
         value_type* leftBound = m_data + n_1;
         value_type endVal = *(s + n_1);
 
-        if (n == 0) {
+        if (count == 0) {
             return i;
         }
 
         do {
-            if (*(leftBound + i) == endVal && !memcmp(m_data + i, s, n)) {
+            if (*(leftBound + i) == endVal && !memcmp(m_data + i, s, count)) {
                 return i;
             }
         } while (i--);
@@ -1323,15 +1355,20 @@ public:
         return rfind(sv.begin(), 0, sv.size());
     }
 
-    constexpr size_type find_first_of(const value_type* s, size_type pos, size_type n) const {
+    constexpr size_type find_first_of(const value_type* s, size_type pos, size_type count) const {
         if (pos > m_length) {
             return npos;
         }
-        // search [m_data + pos, m_data + m_length)]
-        value_type* pFound = static_cast<value_type*>(strpbrk(m_data + pos, s));
-        if (pFound) {
-            return pFound - m_data;
-        }
+
+        size_type i = pos;
+
+        do {
+            // search for current letter in the string of letters
+            if (memchr(s, *(m_data + i), count)) {
+                return i;
+            }
+        } while (++i < m_length);
+
         return npos;
     }
 
@@ -1359,7 +1396,7 @@ public:
         return find_first_of(sv.begin(), 0, sv.size());
     }
 
-    constexpr size_type find_first_not_of(const value_type* s, size_type pos, size_type n) const {
+    constexpr size_type find_first_not_of(const value_type* s, size_type pos, size_type count) const {
         if (pos > m_length) {
             return npos;
         }
@@ -1368,7 +1405,7 @@ public:
 
         do {
             // search for current letter in the string of letters
-            if (!memchr(s, *(m_data + i), n)) {
+            if (!memchr(s, *(m_data + i), count)) {
                 return i;
             }
         } while (++i < m_length);
@@ -1404,12 +1441,12 @@ public:
         return find_first_not_of(sv.begin(), 0, sv.size());
     }
 
-    constexpr size_type find_last_of(const value_type* s, size_type pos, size_type n) const {
+    constexpr size_type find_last_of(const value_type* s, size_type pos, size_type count) const {
         // search [m_data, m_data + pos]
         size_type i = std::min(m_length - 1, pos);
 
         do {
-            if (memchr(s, *(m_data + i), n)) {
+            if (memchr(s, *(m_data + i), count)) {
                 return i;
             }
         } while (i--);
@@ -1441,13 +1478,13 @@ public:
         return find_last_of(sv.begin(), 0, sv.size());
     }
 
-    constexpr size_type find_last_not_of(const value_type* s, size_type pos, size_type n) const {
+    constexpr size_type find_last_not_of(const value_type* s, size_type pos, size_type count) const {
         // search [m_data, m_data + pos]
         size_type i = std::min(m_length - 1, pos);
         value_type* leftBound = m_data;
 
         do {
-            if (!memchr(s, *(leftBound + i), n)) {
+            if (!memchr(s, *(leftBound + i), count)) {
                 return i;
             }
         } while (i--);
@@ -1488,13 +1525,13 @@ private:
     constexpr int compare(const value_type* a, size_type alen, const value_type* b, size_type blen) const noexcept {
         const size_type count = std::min(alen, blen);
         int res = memcmp(a, b, count);
-        return res ? res : alen - blen;
+        return res ? res : (int) (alen - blen);
     }
 
 public:
 
     constexpr int compare(const SIMDString& str) const {
-        if (m_data == str.m_data) {
+        if (m_data == str.m_data && m_length == str.m_length) {
             return 0;
         }
         else {
@@ -1506,8 +1543,8 @@ public:
         return compare(m_data + pos, std::min(m_length - pos, count), str.m_data, str.m_length);
     }
 
-    constexpr int compare(size_type pos, size_type count, const SIMDString& str, size_type pos2, size_type len2) const {
-        return compare(m_data + pos, std::min(m_length - pos, count), str.m_data + pos2, std::min(str.m_length - pos2, len2));
+    constexpr int compare(size_type pos, size_type count1, const SIMDString& str, size_type pos2, size_type count2) const {
+        return compare(m_data + pos, std::min(m_length - pos, count1), str.m_data + pos2, std::min(str.m_length - pos2, count2));
     }
 
     constexpr int compare(const value_type* s) const {
@@ -1518,25 +1555,28 @@ public:
         return compare(m_data + pos, std::min(m_length - pos, count), s, ::strlen(s));
     }
 
-    constexpr int compare(size_type pos, size_type count, const value_type* s, size_type n) const {
-        return compare(m_data + pos, std::min(m_length - pos, count), s, n);
+    constexpr int compare(size_type pos, size_type count1, const value_type* s, size_type count2) const {
+        return compare(m_data + pos, std::min(m_length - pos, count1), s, count2);
     }
 
-    constexpr int compare(size_type pos, size_type count, const std::string_view& sv) {
+    constexpr int compare(const std::string_view& sv) const noexcept {
+        return compare(m_data, m_length, sv.begin(), sv.size());
+    }
+
+    constexpr int compare(size_type pos, size_type count, const std::string_view& sv) const {
         return compare(m_data + pos, count, sv.begin(), sv.size());
     }
 
-    constexpr int compare(size_type pos, size_type count, const std::string_view& sv, size_type pos2, size_type count2) {
-        return compare(m_data + pos, count, sv.begin() + pos2, count2);
+    constexpr int compare(size_type pos, size_type count1, const std::string_view& sv, size_type pos2, size_type count2) const {
+        return compare(m_data + pos, count1, sv.begin() + pos2, count2);
     }
 
-    // actually non-member functions in basic_string
     constexpr bool operator==(const SIMDString& s) const {
-        return (m_data == s.m_data) || ((m_length == s.m_length) && (memcmp(m_data, s.m_data, m_length) == 0));
+        return (m_length == s.m_length) && ((m_data == s.m_data) || !memcmp(m_data, s.m_data, m_length));
     }
 
     constexpr bool operator==(const value_type* s) const {
-        return (m_data == s) || ((m_length == ::strlen(s)) && (memcmp(m_data, s, m_length) == 0));
+        return (m_length == ::strlen(s)) && ((m_data == s) || !memcmp(m_data, s, m_length));
     }
 
     constexpr bool operator!=(const SIMDString& s) const {

@@ -161,8 +161,38 @@ TEST(SIMDStringTest, Access)
   EXPECT_EQ(simdstring[4], 'q');
   EXPECT_EQ(simdstring.front(), 't');
   EXPECT_EQ(simdstring.back(), 'g');
-  EXPECT_EQ(simdstring.c_str(), sampleString);
-  EXPECT_EQ(simdstring.data(), sampleString);
+  EXPECT_STREQ(simdstring.c_str(), sampleString);
+  EXPECT_STREQ(simdstring.data(), sampleString);
+
+  const char* aString = "aaaaa";
+  const char* constString1 = "baaaa";
+  const char* constString2 = "abaaa";
+  const char* constString3 = "aabaa";
+  const char* constString4 = "aaaab";
+
+  SIMDString simdstring1(constString1);
+  EXPECT_EQ(simdstring1.c_str(), constString1);
+  simdstring1.front() = 'a';
+  EXPECT_NE(simdstring1.c_str(), constString1);
+  EXPECT_STREQ(simdstring1.c_str(), aString);
+
+  SIMDString simdstring2("abaaa");
+  EXPECT_EQ(simdstring2.c_str(), constString2);
+  simdstring2[1] = 'a';
+  EXPECT_NE(simdstring2.c_str(), constString2);
+  EXPECT_STREQ(simdstring2.c_str(), aString);
+
+  SIMDString simdstring3("aabaa");
+  EXPECT_EQ(simdstring3.c_str(), constString3);
+  simdstring3.at(2) = 'a';
+  EXPECT_NE(simdstring3.c_str(), constString3);
+  EXPECT_STREQ(simdstring3.c_str(), aString);
+
+  SIMDString simdstring4("aaaab");
+  EXPECT_EQ(simdstring4.c_str(), constString4);
+  simdstring4.back() = 'a';
+  EXPECT_NE(simdstring4.c_str(), constString4);
+  EXPECT_STREQ(simdstring4.c_str(), aString);
 }
 
 TEST(SIMDStringTest, Iterator)
@@ -170,13 +200,29 @@ TEST(SIMDStringTest, Iterator)
   SIMDString simdstring(sampleString);
 
   EXPECT_EQ(*simdstring.begin(), 't');
-  EXPECT_EQ(*(simdstring.end() - 1), 'g');
+  EXPECT_EQ(*(simdstring.end() - 1), 'g'); 
   EXPECT_EQ(*simdstring.cbegin(), 't');
   EXPECT_EQ(*(simdstring.cend() - 1), 'g');
   EXPECT_EQ(*simdstring.rbegin(), 'g');
   EXPECT_EQ(*(simdstring.rend() - 1), 't');
   EXPECT_EQ(*simdstring.crbegin(), 'g');
   EXPECT_EQ(*(simdstring.crend() - 1), 't');
+
+  SIMDString simdstring1("baaaa");
+  *simdstring1.begin() = 'a';
+  EXPECT_STREQ(simdstring1.c_str(), "aaaaa");
+
+  SIMDString simdstring2("abaaa");
+  *(simdstring2.rend() - 2) = 'a';
+  EXPECT_STREQ(simdstring2.c_str(), "aaaaa");
+
+  SIMDString simdstring3("aabaa");
+  *(simdstring3.rbegin() + 2) = 'a';
+  EXPECT_STREQ(simdstring3.c_str(), "aaaaa");
+
+  SIMDString simdstring4("aaaab");
+  *(simdstring4.end() - 1) = 'a';
+  EXPECT_STREQ(simdstring4.c_str(), "aaaaa");
 }
 
 TEST(SIMDStringTest, Compare)
@@ -200,6 +246,9 @@ TEST(SIMDStringTest, Compare)
   EXPECT_EQ(string3.compare(string2), simdstring3.compare(simdstring2));
   EXPECT_EQ(string2.compare(string3), simdstring2.compare(simdstring3));
 
+  EXPECT_EQ(string1.compare(1, 2, string3, 1, 2), simdstring1.compare(1, 2, simdstring3, 1, 2));
+  EXPECT_EQ(string3.compare(1, 2, string1, 1, 2), simdstring3.compare(1, 2, simdstring1, 1, 2));
+
   EXPECT_EQ(string1.compare(simdstring1.c_str()), simdstring1.compare(string1.c_str()));
 
   EXPECT_EQ(string1.compare(simdstring2.c_str()), simdstring1.compare(string2.c_str()));
@@ -211,6 +260,9 @@ TEST(SIMDStringTest, Compare)
   EXPECT_EQ(string3.compare(simdstring2.c_str()), simdstring3.compare(string2.c_str()));
   EXPECT_EQ(string2.compare(simdstring3.c_str()), simdstring2.compare(string3.c_str()));
 
+  EXPECT_EQ(string1.compare(1, 2, simdstring3.c_str(), 2), simdstring1.compare(1, 2, string3.c_str(), 2));
+  EXPECT_EQ(string3.compare(1, 2, simdstring1.c_str(), 2), simdstring3.compare(1, 2, string1.c_str(), 2));
+  
   EXPECT_EQ(string1 < string2, simdstring1 < simdstring2);
   EXPECT_EQ(string2 < string1, simdstring2 < simdstring1);
   EXPECT_EQ(string1 < string3, simdstring1 < simdstring3);
@@ -566,6 +618,12 @@ TEST(SIMDStringTest, FindFirstLastOf)
   EXPECT_EQ(string1.find_last_of('d', 40), simdstring1.find_last_of('d', 40));
   EXPECT_EQ(string1.find_last_of("mnop", 40), simdstring1.find_last_of("mnop", 40));
 
+  EXPECT_EQ(string1.find_first_of('l', 10), simdstring1.find_first_of('l', 10));
+  EXPECT_EQ(string1.find_first_of("jkl", 10), simdstring1.find_first_of("jkl", 10));
+
+  EXPECT_EQ(string1.find_last_of('l', 10), simdstring1.find_last_of('l', 10));
+  EXPECT_EQ(string1.find_last_of("jkl", 10), simdstring1.find_last_of("jkl", 10));
+
   EXPECT_EQ(string1.find_first_of('T'), simdstring1.find_first_of('T'));
   EXPECT_EQ(string1.find_first_of("RST"), simdstring1.find_first_of("RST"));
 
@@ -823,4 +881,18 @@ TEST(SIMDStringTest, IO){
 
 TEST(SIMDStringTest, CompileError){
   SIMDString<32> simdstring1;
+}
+
+TEST(SIMDStringTest, Reserve){
+  SIMDString simdstring1;
+  simdstring1.reserve(1 << 21);
+  EXPECT_EQ((1 << 21) + 1, simdstring1.capacity());
+
+  simdstring1 = SIMDString(100, 'a');
+  simdstring1.reserve();
+  EXPECT_EQ((100 + 1) * 2 + 1, simdstring1.capacity());
+
+  simdstring1 = SIMDString(10, 'a');
+  simdstring1.reserve();
+  EXPECT_EQ(64, simdstring1.capacity());
 }
