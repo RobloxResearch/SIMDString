@@ -3,9 +3,6 @@
 SIMDString
 =========================================================================================================
 
-Updated September 14, 2022
-
-
 `SIMDString` is a [MIT-licensed](https://opensource.org/licenses/MIT) open source implementation
 of a fast C++ string class designed for use in games. It is a drop-in replacement for `std::string` that
 is 10-100x faster for many common operations, such as small `string::operator+=(const char*)`,
