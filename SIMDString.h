@@ -801,7 +801,7 @@ public:
             return append(c);
         }
         replace(pos - m_data, 0, 1, c);
-        return m_data + pos;
+        return pos;
     }
 
     constexpr SIMDString& insert(const_iterator pos, std::initializer_list<value_type> ilist) {
