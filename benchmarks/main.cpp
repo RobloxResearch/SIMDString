@@ -1,6 +1,6 @@
 //#define TEST_EASTL
 //#define TEST_FOLLY
-#define TEST_G3D_ALLOC
+//#define TEST_G3D_ALLOC
 
 
 #include "SIMDString.h"
@@ -19,7 +19,7 @@
 #endif
 
 
-int main(int argc, const char* argv[]) {
+int main(int argc, char* argv[]) {
     // __VA_ARGS_ is necessary because type templating messes up Macro argument parsing
 #   define REGISTER_CLASS_BENCHMARKS(...) RegisterBenchmarks<__VA_ARGS__>(#__VA_ARGS__)
 
