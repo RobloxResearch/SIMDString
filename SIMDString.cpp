@@ -25,7 +25,7 @@ SOFTWARE.
 #include <stdint.h>
 #include <cstdlib>
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 #   define OS_WINDOWS
 #elif defined(__APPLE__)
 #   define OS_OSX
