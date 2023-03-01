@@ -123,10 +123,14 @@ When running the benchmark, follow the instructions on the Benchmark user guide 
 [run a subset of benchmarks](https://github.com/google/benchmark/blob/main/docs/user_guide.md#running-a-subset-of-benchmarks). 
 Any arguments passed into `benchmarks/main.cpp` are passed directly into the Google benchmark functions. 
 
+Talk 
+=========================================================================================================
+Zander Majercik (NVIDIA, Williams College) gave a talk at CPPCon announcing SIMDString which [can be viewed here](https://www.youtube.com/watch?v=fglXeSWGVDc).
+The slides for this talk are available in this repo. 
+
 Licensing
 =========================================================================================================
 All code under the `tests` folder is under the same MIT license as SIMDString. The `benchmarks` folder
 contains code from the [LLVM-Project](https://github.com/llvm/llvm-project), and is under a separate license 
 as represented by the LICENSE file in that folder. 
-
 

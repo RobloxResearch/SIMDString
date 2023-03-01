@@ -21,7 +21,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-
 #include <gtest/gtest.h>
 #include <SIMDString.h>
 #include <string>
@@ -30,20 +29,20 @@ char sampleString[44] = "the quick brown fox jumps over the lazy dog";
 
 TEST(SIMDStringTest, Construct)
 {
-  SIMDString simdstring0;
-  SIMDString simdstring1('a');
-  SIMDString simdstring2("0123456789abcdefghijklmnopqrstuvwxyz");
-  SIMDString simdstring3(simdstring2, 10);
-  SIMDString simdstring4(simdstring2, 10, 10);
-  SIMDString simdstring5(simdstring2.begin(), simdstring2.begin() + 10);
-  SIMDString simdstring6{SIMDString(sampleString)};
-  SIMDString simdstring7({'a', 'b', 'c'});
+  SIMDString<64> simdstring0;
+  SIMDString<64> simdstring1('a');
+  SIMDString<64> simdstring2("0123456789abcdefghijklmnopqrstuvwxyz");
+  SIMDString<64> simdstring3(simdstring2, 10);
+  SIMDString<64> simdstring4(simdstring2, 10, 10);
+  SIMDString<64> simdstring5(simdstring2.begin(), simdstring2.begin() + 10);
+  SIMDString<64> simdstring6{SIMDString<64>(sampleString)};
+  SIMDString<64> simdstring7({'a', 'b', 'c'});
 
   std::string string1(sampleString);
-  SIMDString simdstring8(string1, 40);
-  SIMDString simdstring9(string1, 4, 5);
-  SIMDString simdstring10(10, 'b');
-  SIMDString simdstring11(simdstring10);
+  SIMDString<64> simdstring8(string1, 40);
+  SIMDString<64> simdstring9(string1, 4, 5);
+  SIMDString<64> simdstring10(10, 'b');
+  SIMDString<64> simdstring11(simdstring10);
 
   EXPECT_EQ(simdstring0.size(), 0);
   EXPECT_STREQ(simdstring0.c_str(), "");
@@ -79,18 +78,29 @@ TEST(SIMDStringTest, Construct)
   EXPECT_STREQ(simdstring10.c_str(), "bbbbbbbbbb");
 
   simdstring10.insert(0, "0123456789");
-  SIMDString simdstring12(simdstring10, 0, 5);
+  SIMDString<64> simdstring12(simdstring10, 0, 5);
 
   EXPECT_EQ(simdstring11.size(), 10);
   EXPECT_STREQ(simdstring11.c_str(), "bbbbbbbbbb");
 
   EXPECT_EQ(simdstring12.size(), 5);
   EXPECT_STREQ(simdstring12.c_str(), "01234");
+
+  SIMDString<64> simdstring13 (string1.begin(), string1.end());
+  EXPECT_EQ(simdstring13.size(), string1.size());
+  EXPECT_STREQ(simdstring13.c_str(), string1.c_str());
+
+  std::istringstream ss{sampleString};
+  std::istreambuf_iterator<char> it{ss};
+  SIMDString<64> simdstring14{it, std::istreambuf_iterator<char>()};
+  EXPECT_STREQ(simdstring14.c_str(), sampleString);
+  EXPECT_EQ(simdstring14.size(), strlen(sampleString));
+
 }
 
 TEST(SIMDStringTest, Assign)
 {
-  SIMDString simdstring0;
+  SIMDString<64> simdstring0;
   EXPECT_EQ(simdstring0.size(), 0);
   EXPECT_STREQ(simdstring0.c_str(), "");
 
@@ -98,9 +108,9 @@ TEST(SIMDStringTest, Assign)
   EXPECT_EQ(simdstring0.size(), 1);
   EXPECT_STREQ(simdstring0.c_str(), "a");
 
-  SIMDString simdstring1(sampleString, 26);
+  SIMDString<64> simdstring1(sampleString, 26);
 
-  SIMDString simdstring2("0123456789abcdefghijklmnopqrstuvwxyz");
+  SIMDString<64> simdstring2("0123456789abcdefghijklmnopqrstuvwxyz");
 
   simdstring0.assign(simdstring2);
   EXPECT_EQ(simdstring0.size(), 36);
@@ -122,7 +132,7 @@ TEST(SIMDStringTest, Assign)
   EXPECT_EQ(simdstring0.size(), 10);
   EXPECT_STREQ(simdstring0.c_str(), "0123456789");
 
-  simdstring0 = SIMDString(sampleString);
+  simdstring0 = SIMDString<64>(sampleString);
   EXPECT_EQ(simdstring0.size(), 43);
   EXPECT_STREQ(simdstring0.c_str(), sampleString);
 
@@ -134,7 +144,7 @@ TEST(SIMDStringTest, Assign)
   EXPECT_EQ(simdstring0.size(), 3);
   EXPECT_STREQ(simdstring0.c_str(), "abc");
 
-  SIMDString simdstring3(100, 'a');
+  SIMDString<64> simdstring3(100, 'a');
   std::string string3(100, 'a');
   simdstring0.assign(simdstring3);
   EXPECT_EQ(simdstring0.size(), string3.size());
@@ -151,11 +161,16 @@ TEST(SIMDStringTest, Assign)
   simdstring0.assign(string3.c_str());
   EXPECT_EQ(simdstring0.size(), string3.size());
   EXPECT_STREQ(simdstring0.c_str(), string3.c_str());
+
+  std::string string4(40, 'c');
+  simdstring0 = string4;
+  EXPECT_EQ(simdstring0.size(), string4.size());
+  EXPECT_STREQ(simdstring0.c_str(), string4.c_str());
 }
 
 TEST(SIMDStringTest, Access)
 {
-  SIMDString simdstring(sampleString);
+  SIMDString<64> simdstring(sampleString);
 
   EXPECT_EQ(simdstring.at(4), 'q');
   EXPECT_EQ(simdstring[4], 'q');
@@ -170,25 +185,25 @@ TEST(SIMDStringTest, Access)
   const char* constString3 = "aabaa";
   const char* constString4 = "aaaab";
 
-  SIMDString simdstring1(constString1);
+  SIMDString<64> simdstring1(constString1);
   EXPECT_EQ(simdstring1.c_str(), constString1);
   simdstring1.front() = 'a';
   EXPECT_NE(simdstring1.c_str(), constString1);
   EXPECT_STREQ(simdstring1.c_str(), aString);
 
-  SIMDString simdstring2("abaaa");
+  SIMDString<64> simdstring2("abaaa");
   EXPECT_EQ(simdstring2.c_str(), constString2);
   simdstring2[1] = 'a';
   EXPECT_NE(simdstring2.c_str(), constString2);
   EXPECT_STREQ(simdstring2.c_str(), aString);
 
-  SIMDString simdstring3("aabaa");
+  SIMDString<64> simdstring3("aabaa");
   EXPECT_EQ(simdstring3.c_str(), constString3);
   simdstring3.at(2) = 'a';
   EXPECT_NE(simdstring3.c_str(), constString3);
   EXPECT_STREQ(simdstring3.c_str(), aString);
 
-  SIMDString simdstring4("aaaab");
+  SIMDString<64> simdstring4("aaaab");
   EXPECT_EQ(simdstring4.c_str(), constString4);
   simdstring4.back() = 'a';
   EXPECT_NE(simdstring4.c_str(), constString4);
@@ -197,7 +212,7 @@ TEST(SIMDStringTest, Access)
 
 TEST(SIMDStringTest, Iterator)
 {
-  SIMDString simdstring(sampleString);
+  SIMDString<64> simdstring(sampleString);
 
   EXPECT_EQ(*simdstring.begin(), 't');
   EXPECT_EQ(*(simdstring.end() - 1), 'g'); 
@@ -208,19 +223,19 @@ TEST(SIMDStringTest, Iterator)
   EXPECT_EQ(*simdstring.crbegin(), 'g');
   EXPECT_EQ(*(simdstring.crend() - 1), 't');
 
-  SIMDString simdstring1("baaaa");
+  SIMDString<64> simdstring1("baaaa");
   *simdstring1.begin() = 'a';
   EXPECT_STREQ(simdstring1.c_str(), "aaaaa");
 
-  SIMDString simdstring2("abaaa");
+  SIMDString<64> simdstring2("abaaa");
   *(simdstring2.rend() - 2) = 'a';
   EXPECT_STREQ(simdstring2.c_str(), "aaaaa");
 
-  SIMDString simdstring3("aabaa");
+  SIMDString<64> simdstring3("aabaa");
   *(simdstring3.rbegin() + 2) = 'a';
   EXPECT_STREQ(simdstring3.c_str(), "aaaaa");
 
-  SIMDString simdstring4("aaaab");
+  SIMDString<64> simdstring4("aaaab");
   *(simdstring4.end() - 1) = 'a';
   EXPECT_STREQ(simdstring4.c_str(), "aaaaa");
 }
@@ -231,9 +246,9 @@ TEST(SIMDStringTest, Compare)
   std::string string2(string1, 1);
   std::string string3(6, 'b');
 
-  SIMDString simdstring1(5, 'a');
-  SIMDString simdstring2(simdstring1, 1);
-  SIMDString simdstring3(6, 'b');
+  SIMDString<64> simdstring1(5, 'a');
+  SIMDString<64> simdstring2(simdstring1, 1);
+  SIMDString<64> simdstring3(6, 'b');
 
   EXPECT_EQ(string1.compare(string1), simdstring1.compare(simdstring1));
 
@@ -294,9 +309,9 @@ TEST(SIMDStringTest, Compare)
 
 TEST(SIMDStringTest, Equality)
 {
-  SIMDString simdstring1(5, 'a');
-  SIMDString simdstring2(6, 'a');
-  SIMDString simdstring3(6, 'b');
+  SIMDString<64> simdstring1(5, 'a');
+  SIMDString<64> simdstring2(6, 'a');
+  SIMDString<64> simdstring3(6, 'b');
   std::string string1(5, 'a');
   std::string string2(6, 'a');
   std::string string3(6, 'b');
@@ -335,8 +350,8 @@ TEST(SIMDStringTest, Append)
   std::string string1(5, 'a');
   std::string string2(6, 'b');
 
-  SIMDString simdstring1(5, 'a');
-  SIMDString simdstring2(6, 'b');
+  SIMDString<64> simdstring1(5, 'a');
+  SIMDString<64> simdstring2(6, 'b');
 
   EXPECT_STREQ((string1 + "abc").c_str(), (simdstring1 + "abc").c_str());
   EXPECT_STREQ((string1 + 'a').c_str(), (simdstring1 + 'a').c_str());
@@ -363,6 +378,9 @@ TEST(SIMDStringTest, Append)
   EXPECT_STREQ(string1.append({'d', '1', 'h'}).c_str(), simdstring1.append({'d', '1', 'h'}).c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
 
+  EXPECT_STREQ(string1.append(string2.begin() + 1, string2.begin() + 3).c_str(), simdstring1.append(simdstring2.begin() + 1, simdstring2.begin() + 3).c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
+
   EXPECT_STREQ((string1 + string2).c_str(), (simdstring1 + simdstring2).c_str());
   EXPECT_STREQ((string1 + sampleString).c_str(), (simdstring1 + sampleString).c_str());
   EXPECT_STREQ((string1 + 'a').c_str(), (simdstring1 + 'a').c_str());
@@ -370,7 +388,7 @@ TEST(SIMDStringTest, Append)
 
 TEST(SIMDStringTest, PushPopBack)
 {
-  SIMDString simdstring1(sampleString);
+  SIMDString<64> simdstring1(sampleString);
   std::string string1(sampleString);
 
   string1.push_back('a');
@@ -384,7 +402,7 @@ TEST(SIMDStringTest, PushPopBack)
   EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
 
-  SIMDString simdstring2;
+  SIMDString<64> simdstring2;
   simdstring2.push_back('a');
   EXPECT_STREQ(simdstring2.c_str(), "a");
   EXPECT_EQ(simdstring2.length(), 1);
@@ -395,8 +413,8 @@ TEST(SIMDStringTest, Insert)
   std::string string1("0123456789");
   std::string string2("abcdefg");
 
-  SIMDString simdstring1("0123456789");
-  SIMDString simdstring2("abcdefg");
+  SIMDString<64> simdstring1("0123456789");
+  SIMDString<64> simdstring2("abcdefg");
 
   EXPECT_STREQ(string1.insert(0, string2).c_str(), simdstring1.insert(0, simdstring2).c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
@@ -430,6 +448,16 @@ TEST(SIMDStringTest, Insert)
   EXPECT_EQ(string1.length(), simdstring1.length());
   EXPECT_STREQ(string1.insert(10, 6, 'z').c_str(), simdstring1.insert(10, 6, 'z').c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
+
+  string1.insert(string1.begin() + 2, string2.begin() + 2, string2.begin() + 4);
+  simdstring1.insert(simdstring1.begin() + 2, simdstring2.begin() + 2, simdstring2.begin() + 4);
+  EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
+
+  string1.insert(string1.begin(), '/');
+  simdstring1.insert(simdstring1.begin(), '/');
+  EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
 }
 
 TEST(SIMDStringTest, Replace)
@@ -437,8 +465,8 @@ TEST(SIMDStringTest, Replace)
   std::string string1("0123456789");
   std::string string2("abcdefg");
 
-  SIMDString simdstring1("0123456789");
-  SIMDString simdstring2("abcdefg");
+  SIMDString<64> simdstring1("0123456789");
+  SIMDString<64> simdstring2("abcdefg");
 
   EXPECT_STREQ(string1.replace(0, 1, string2).c_str(), simdstring1.replace(0, 1, simdstring2).c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
@@ -483,11 +511,16 @@ TEST(SIMDStringTest, Replace)
   EXPECT_EQ(string1.length(), simdstring1.length());
   EXPECT_STREQ(string1.replace(5, 5, 5, 'z').c_str(), simdstring1.replace(5, 5, 5, 'z').c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
+
+  string1.replace(string1.begin() + 2, string1.begin() + 6, string2.begin() + 2, string2.begin() + 4);
+  simdstring1.replace(simdstring1.begin() + 2, simdstring1.begin() + 6, simdstring2.begin() + 2, simdstring2.begin() + 4);
+  EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
 }
 
 TEST(SIMDStringTest, ClearErase)
 {
-  SIMDString simdstring1(sampleString);
+  SIMDString<64> simdstring1(sampleString);
   std::string string1(sampleString);
 
   EXPECT_EQ(simdstring1.erase(6, 12).size(), string1.erase(6, 12).size());
@@ -511,24 +544,40 @@ TEST(SIMDStringTest, ClearErase)
   EXPECT_STREQ(simdstring1.c_str(), "");
   EXPECT_TRUE(simdstring1.empty());
 
-  SIMDString simdstring2(sampleString);
+  SIMDString<64> simdstring2(sampleString);
   simdstring2.clear();
   EXPECT_EQ(simdstring2.size(), 0);
   EXPECT_EQ(simdstring2.length(), 0);
   EXPECT_STREQ(simdstring2.c_str(), "");
   EXPECT_TRUE(simdstring2.empty());
+
+  SIMDString<64> simdstring3(sampleString);
+  std::string string3(sampleString);
+  simdstring3.erase(10, 1);
+  string3.erase(10, 1);
+  EXPECT_EQ(simdstring3.size(), string3.size());
+  EXPECT_STREQ(simdstring3.c_str(), string3.c_str());
+  EXPECT_FALSE(simdstring3.empty());
+  
+  std::string string4(100, 'a');
+  SIMDString<64> simdstring4(100, 'a');
+  string4[75] = 'b';
+  simdstring4[75] = 'b';
+  EXPECT_EQ(simdstring4.size(), string4.size());
+  EXPECT_STREQ(simdstring4.c_str(), string4.c_str());
+  EXPECT_FALSE(simdstring4.empty());
 }
 
 TEST(SIMDStringTest, Swap)
 {
   std::string string1("abcabcabcabcabcabcabcdabcabcabcabc");
-  SIMDString simdstring1("abcabcabcabcabcabcabcdabcabcabcabc");
+  SIMDString<64> simdstring1("abcabcabcabcabcabcabcdabcabcabcabc");
 
   std::string string2("aaaaaaaaaaaaaaaaabaaaaaaaa");
-  SIMDString simdstring2("aaaaaaaaaaaaaaaaabaaaaaaaa");
+  SIMDString<64> simdstring2("aaaaaaaaaaaaaaaaabaaaaaaaa");
 
   std::string string3(100, 'a');
-  SIMDString simdstring3(100, 'a');
+  SIMDString<64> simdstring3(100, 'a');
 
   simdstring1.swap(simdstring2);
 
@@ -548,15 +597,15 @@ TEST(SIMDStringTest, Swap)
 TEST(SIMDStringTest, Find)
 {
   std::string string1("abcabcabcabcabcabcabcdabcabcabcabc");
-  SIMDString simdstring1("abcabcabcabcabcabcabcdabcabcabcabc");
+  SIMDString<64> simdstring1("abcabcabcabcabcabcabcdabcabcabcabc");
 
   std::string string2("aaaaaaaaaaaaaaaaabaaaaaaaa");
-  SIMDString simdstring2("aaaaaaaaaaaaaaaaabaaaaaaaa");
+  SIMDString<64> simdstring2("aaaaaaaaaaaaaaaaabaaaaaaaa");
 
   std::string string3(10, '-');
-  SIMDString simdstring3(10, '-');
+  SIMDString<64> simdstring3(10, '-');
   std::string string4(8, '*');
-  SIMDString simdstring4(8, '*');
+  SIMDString<64> simdstring4(8, '*');
 
   EXPECT_EQ(string1.find("abcd"), simdstring1.find("abcd"));
   EXPECT_EQ(string1.find("abcabcabcabcabcabcabcdabcabcabcabcasdf"), simdstring1.find("abcabcabcabcabcabcabcdabcabcabcabcasdf"));
@@ -566,7 +615,18 @@ TEST(SIMDStringTest, Find)
   EXPECT_EQ(string3.find(string4), simdstring3.find(simdstring4));
   EXPECT_EQ(string3.find("", 6), simdstring3.find("", 6));
 
-  SIMDString simdstring5; 
+  std::string string6(20, 'a');
+  SIMDString<64> simdstring6(20, 'a');
+  string6[15] = 'b';
+  simdstring6[15] = 'b';
+
+  string6.resize(11);
+  simdstring6.resize(11);  
+  EXPECT_EQ(string6.find("ab", 6), simdstring6.find("ab", 6));
+  EXPECT_EQ(string6.find('b', 6), simdstring6.find('b', 6));
+
+
+  SIMDString<64> simdstring5; 
   std::string string5; 
 
   EXPECT_EQ(string5.find("abcd"), simdstring5.find("abcd"));
@@ -575,15 +635,15 @@ TEST(SIMDStringTest, Find)
 TEST(SIMDStringTest, RFind)
 {
   std::string string1("abcabcabcabcabcabcabcdabcabcabcabc");
-  SIMDString simdstring1("abcabcabcabcabcabcabcdabcabcabcabc");
+  SIMDString<64> simdstring1("abcabcabcabcabcabcabcdabcabcabcabc");
 
   std::string string2("aaaaaaaaaaaaaaaaabaaaaaaaa");
-  SIMDString simdstring2("aaaaaaaaaaaaaaaaabaaaaaaaa");
+  SIMDString<64> simdstring2("aaaaaaaaaaaaaaaaabaaaaaaaa");
 
   std::string string3(10, '-');
-  SIMDString simdstring3(10, '-');
+  SIMDString<64> simdstring3(10, '-');
   std::string string4(8, '*');
-  SIMDString simdstring4(8, '*');
+  SIMDString<64> simdstring4(8, '*');
 
   EXPECT_EQ(string1.rfind("abcd"), simdstring1.rfind("abcd"));
   EXPECT_EQ(string1.rfind("abcd", 10), simdstring1.rfind("abcd", 10));
@@ -595,7 +655,7 @@ TEST(SIMDStringTest, RFind)
   EXPECT_EQ(string3.rfind(string4), simdstring3.rfind(simdstring4));
   EXPECT_EQ(string3.rfind("", 6), simdstring3.rfind("", 6));
 
-  SIMDString simdstring5; 
+  SIMDString<64> simdstring5; 
   std::string string5; 
 
   EXPECT_EQ(string5.rfind("abcd"), simdstring5.rfind("abcd"));
@@ -604,7 +664,7 @@ TEST(SIMDStringTest, RFind)
 TEST(SIMDStringTest, FindFirstLastOf)
 {
   std::string string1("The quick brown fox jumps over the lazy dog. Sphinx of black quartz, judge my vow.");
-  SIMDString simdstring1("The quick brown fox jumps over the lazy dog. Sphinx of black quartz, judge my vow.");
+  SIMDString<64> simdstring1("The quick brown fox jumps over the lazy dog. Sphinx of black quartz, judge my vow.");
 
   EXPECT_EQ(string1.find_first_of('d'), simdstring1.find_first_of('d'));
   EXPECT_EQ(string1.find_first_of("mnop"), simdstring1.find_first_of("mnop"));
@@ -653,7 +713,7 @@ TEST(SIMDStringTest, FindFirstLastOf)
 TEST(SIMDStringTest, FindFirstLastNotOf)
 {
   std::string string1("     a           b     m       c            d            e    t     f         ");
-  SIMDString simdstring1("     a           b     m       c            d            e    t     f         ");
+  SIMDString<64> simdstring1("     a           b     m       c            d            e    t     f         ");
 
   EXPECT_EQ(string1.find_first_not_of(' '), simdstring1.find_first_not_of(' '));
   // the space in "abcdef " is important
@@ -681,7 +741,7 @@ TEST(SIMDStringTest, FindFirstLastNotOf)
   EXPECT_EQ(string1.find_last_not_of('a', 35), simdstring1.find_last_not_of('a', 35));
   EXPECT_EQ(string1.find_last_not_of("abcdef", 35), simdstring1.find_last_not_of("abcdef", 35));
 
-  SIMDString simdstring2 ("aaaaaaaa");
+  SIMDString<64> simdstring2 ("aaaaaaaa");
   std::string string2("aaaaaaaa");
 
   EXPECT_EQ(string2.find_first_not_of('a'), simdstring2.find_first_not_of('a'));
@@ -700,7 +760,7 @@ TEST(SIMDStringTest, FindFirstLastNotOf)
 
 TEST(SIMDStringTest, StartsEndsWith)
 {
-  SIMDString simdstring1(sampleString);
+  SIMDString<64> simdstring1(sampleString);
   std::string string1(sampleString);
 
   EXPECT_TRUE(simdstring1.starts_with("the"));
@@ -713,7 +773,8 @@ TEST(SIMDStringTest, CopySubstr)
 {
 
   char tmp[11];
-  SIMDString simdstring1("0123456789abcdefghijklmnopqrstuvwxyz");
+  SIMDString<64> simdstring1("0123456789abcdefghijklmnopqrstuvwxyz");
+  SIMDString<64> simdstring2(100, 'a');
   tmp[10] = 0;
 
   EXPECT_EQ(10, simdstring1.copy(tmp, 10));
@@ -725,11 +786,13 @@ TEST(SIMDStringTest, CopySubstr)
   EXPECT_STREQ(tmp, simdstring1.substr(10, 10).c_str());
 
   EXPECT_STREQ("abcdefghijklmnopqrstuvwxyz", simdstring1.substr(10).c_str());
+  EXPECT_STREQ("aaaaaaaaaa", simdstring2.substr(10, 10).c_str());
+
 }
 
 TEST(SIMDStringTest, Resize)
 {
-  SIMDString simdstring1(sampleString);
+  SIMDString<64> simdstring1(sampleString);
   std::string string1(sampleString);
 
   simdstring1.resize(50);
@@ -755,7 +818,7 @@ TEST(SIMDStringTest, Resize)
 
 TEST(SIMDStringTest, Size)
 {
-  SIMDString simdstring1(sampleString);
+  SIMDString<64> simdstring1(sampleString);
   std::string string1(sampleString);
 
   EXPECT_EQ(simdstring1.size(), string1.size());
@@ -768,7 +831,7 @@ TEST(SIMDStringTest, Size)
 
 TEST(SIMDStringTest, Conversions)
 {
-  SIMDString simdstring1 = to_string(1234567890);
+  SIMDString<64> simdstring1 = to_string(1234567890);
   std::string string1 = std::to_string(1234567890);
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
 
@@ -804,7 +867,7 @@ TEST(SIMDStringTest, Conversions)
   string1 = std::to_string(0X1.BC70A3D70A3D7P+6l);
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
 
-  SIMDString simdstring2("-1234567890");
+  SIMDString<64> simdstring2("-1234567890");
   std::string string2("-1234567890");
 
   EXPECT_EQ(stoi(simdstring2), std::stoi(string2));
@@ -827,7 +890,7 @@ TEST(SIMDStringTest, Conversions)
   EXPECT_EQ(stoull(simdstring2, &posSimdstring), std::stoll(string2, &posString));
   EXPECT_EQ(posSimdstring, posString);
 
-  SIMDString simdstring3("-1.52343249");
+  SIMDString<64> simdstring3("-1.52343249");
   std::string string3("-1.52343249");
 
   EXPECT_EQ(stof(simdstring3), std::stof(string3));
@@ -845,14 +908,16 @@ TEST(SIMDStringTest, Conversions)
 TEST(SIMDStringTest, IO){
   std::istringstream iss1("Hello there!\nWho are you?");
   std::istringstream iss2("Hello there!\nWho are you?");
+  std::istringstream iss3("Hello there!\nWho are you?");
+  std::istringstream iss4("Hello there!\nWho are you?");
 
   std::string tmp(1 << 21, '-');
-  std::istringstream iss3(tmp);
-  std::istringstream iss4(tmp);
   std::istringstream iss5(tmp);
   std::istringstream iss6(tmp);
+  std::istringstream iss7(tmp);
+  std::istringstream iss8(tmp);
 
-  SIMDString simdstring1;
+  SIMDString<64> simdstring1;
   std::string string1;
 
   iss1 >> simdstring1;
@@ -863,8 +928,15 @@ TEST(SIMDStringTest, IO){
   getline(iss2, simdstring1);
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
 
+  iss3.setf(std::ios::skipws);
+  iss4.setf(std::ios::skipws);
   iss3 >> simdstring1;
   iss4 >> string1;
+  EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
+  EXPECT_EQ(iss3.get(), iss4.get());
+
+  iss7 >> simdstring1;
+  iss8 >> string1;
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
 
   std::getline(iss5, string1);
@@ -874,8 +946,12 @@ TEST(SIMDStringTest, IO){
   std::ostringstream oss2;
   std::ostringstream oss1;
 
-  oss1 << simdstring1; 
-  oss2 << string1; 
+  SIMDString<64> simdstring2(sampleString);
+  std::string string2(sampleString);
+
+  oss1 << std::setw(50) << simdstring2 << std::setfill('*') << std::setw(50) << simdstring2 << std::endl; 
+  oss2 << std::setw(50) << string2 << std::setfill('*') << std::setw(50) << string2 << std::endl; 
+
   EXPECT_STREQ(oss1.str().c_str(), oss2.str().c_str());
 }
 
@@ -884,7 +960,7 @@ TEST(SIMDStringTest, CompileError){
 }
 
 TEST(SIMDStringTest, Reserve){
-  SIMDString simdstring1;
+  SIMDString<64> simdstring1;
   simdstring1.reserve(1 << 21);
   EXPECT_EQ((1 << 21) + 1, simdstring1.capacity());
 
@@ -895,4 +971,37 @@ TEST(SIMDStringTest, Reserve){
   simdstring1 = SIMDString(10, 'a');
   simdstring1.reserve();
   EXPECT_EQ(64, simdstring1.capacity());
+
+  simdstring1 = SIMDString(sampleString);
+  simdstring1.reserve();
+  EXPECT_EQ(43, simdstring1.capacity());
 }
+
+TEST(SIMDStringTest, Hash){
+  SIMDString<64> simdstring1(sampleString);
+  std::string string1(sampleString);
+
+  // only works if G3D Alloc is disabled bc had to hard code in types for hash
+  size_t simdHash = std::hash<SIMDString<64>>{}(simdstring1);
+  size_t stringHash = std::hash<std::string>{}(string1);
+
+  EXPECT_EQ(simdHash, stringHash);
+}
+
+TEST(SIMDStringTest, RangeLoops){
+  std::string result1, result2;
+
+  SIMDString<64> simdstring1(sampleString);
+  std::string string1(sampleString);
+
+  for (char c : simdstring1){
+    result1.push_back(c);
+  }
+
+  for (char c : string1){
+    result2.push_back(c);
+  }
+
+  EXPECT_STREQ(result1.c_str(), result2.c_str());
+}
+

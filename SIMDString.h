@@ -37,6 +37,8 @@ SOFTWARE.
 #include <iostream>
 #include <string_view>
 #include <initializer_list>
+#include <regex>
+#include <errno.h>
 
 #if defined(USE_SSE_MEMCPY) && USE_SSE_MEMCPY
 #   if (defined(__arm__) || defined(__arm64__)) 
@@ -59,6 +61,7 @@ SOFTWARE.
 #        include <smmintrin.h>
 #   endif
 #endif
+
 
 
 #if ! defined(NO_G3D_ALLOCATOR) || (NO_G3D_ALLOCATOR == 0)
@@ -104,10 +107,93 @@ public:
     typedef const value_type*                       const_pointer;
     typedef ptrdiff_t                               difference_type;
     typedef size_t                                  size_type;
-    typedef const_pointer                           const_iterator;
-    typedef pointer                                 iterator;
-    typedef std::reverse_iterator<const_pointer>    const_reverse_iterator;
-    typedef std::reverse_iterator<pointer>          reverse_iterator;
+
+    template<typename StrType>
+    class Const_Iterator {
+    public:
+        using iterator_category = std::random_access_iterator_tag;
+        using value_type = typename StrType::value_type;
+        using reference = const value_type&;
+        using pointer = typename StrType::const_pointer;
+        using difference_type = typename StrType::difference_type;
+    private:
+        pointer m_ptr; 
+    public:
+
+        Const_Iterator() : m_ptr(nullptr) {}
+        Const_Iterator(pointer ptr) : m_ptr(ptr) {}
+        Const_Iterator(const Const_Iterator& i) : m_ptr(i.m_ptr) {}
+
+        inline reference operator*() const { return *m_ptr; }
+        inline pointer operator->() const { std::pointer_traits<pointer>::pointer_to(**this); }
+        inline reference operator[](difference_type rhs) { return m_ptr[rhs]; }
+
+        inline Const_Iterator& operator+=(difference_type rhs) {m_ptr += rhs; return *this;}
+        inline Const_Iterator& operator++() { m_ptr++; return *this; }  
+        inline Const_Iterator operator++(int) { Const_Iterator tmp (*this); ++m_ptr; return tmp; }
+        inline Const_Iterator& operator-=(difference_type rhs) {m_ptr -= rhs; return *this;}
+        inline Const_Iterator& operator--() { m_ptr--; return *this; }  
+        inline Const_Iterator operator--(int) {  Const_Iterator tmp(*this); --(*this); return tmp; }
+
+        inline difference_type operator-(const Const_Iterator& rhs) const {return m_ptr - rhs.m_ptr;}
+        inline Const_Iterator operator-(difference_type rhs) const { Const_Iterator tmp (*this); return tmp -= rhs; }
+        inline Const_Iterator operator+(difference_type rhs) const { Const_Iterator tmp (*this); return tmp += rhs; }
+        friend inline Const_Iterator operator+(difference_type lhs, Const_Iterator<StrType> rhs){ return rhs += lhs; }
+
+        inline bool operator== (const Const_Iterator& rhs) const { return m_ptr == rhs.m_ptr; };
+        inline bool operator!= (const Const_Iterator& rhs) const { return m_ptr != rhs.m_ptr; };  
+        inline bool operator< (const Const_Iterator& rhs) const { return m_ptr < rhs.m_ptr; };
+        inline bool operator<= (const Const_Iterator& rhs) const { return m_ptr <= rhs.m_ptr; };  
+        inline bool operator> (const Const_Iterator& rhs) const { return m_ptr > rhs.m_ptr; };
+        inline bool operator>= (const Const_Iterator& rhs) const { return m_ptr >= rhs.m_ptr; }; 
+
+        value_type* _Unwrapped() const { return this->m_ptr; }
+    };
+
+    template<typename StrType>
+    class Iterator: public Const_Iterator<StrType> {
+    public:
+        using super = Const_Iterator<StrType>;
+        using iterator_category = std::random_access_iterator_tag;
+        using value_type = typename StrType::value_type;
+        using reference = value_type&;
+        using pointer = typename StrType::pointer;
+        using difference_type = typename StrType::difference_type;
+
+        using super::super;
+
+        inline reference operator*() {  return const_cast<reference>(super::operator*()); }
+        inline pointer operator->() { std::pointer_traits<pointer>::pointer_to(**this);  }
+        inline reference operator[](difference_type diff) { return const_cast<reference>(super::operator[](diff)); }
+
+        inline Iterator& operator+=(difference_type rhs) { super::operator+=(rhs); return *this; }
+        inline Iterator& operator++() { super::operator++(); return *this; }  
+        inline Iterator operator++(int) { Iterator tmp (*this); super::operator++(); return tmp; }
+        inline Iterator& operator-=(difference_type rhs) { super::operator-=(rhs); return *this; }
+        inline Iterator& operator--() { super::operator--(); return *this; }  
+        inline Iterator operator--(int) { Iterator tmp = *this; super::operator--(); return tmp; }
+
+        using super::operator-;
+        inline Iterator operator-(difference_type rhs) const { Iterator tmp (*this); return tmp -= rhs; }
+        inline Iterator operator+(difference_type rhs) const { Iterator tmp (*this); return tmp += rhs; }
+        friend inline Iterator operator+(difference_type lhs, Iterator<StrType> rhs){ return rhs += lhs; }
+
+        using super::operator==;
+        using super::operator!=;
+        using super::operator<=;
+        using super::operator>=;
+        using super::operator<;
+        using super::operator>;
+
+        //using _Prevent_inheriting_unwrap = _String_iterator;
+
+        value_type* _Unwrapped() const noexcept { return const_cast<value_type*>(this->m_ptr); }
+    };
+
+    typedef Const_Iterator<SIMDString>                      const_iterator;
+    typedef Iterator<SIMDString>                            iterator;
+    typedef std::reverse_iterator<const_iterator>           const_reverse_iterator;
+    typedef std::reverse_iterator<iterator>                 reverse_iterator;
 
 protected:
     // Throw compile time error if INTERNAL_SIZE is not a multiple of SSO_ALIGNMENT
@@ -117,10 +203,10 @@ protected:
     char            m_buffer[INTERNAL_SIZE];
 
     /** Includes \0 termination */
-    value_type* m_data;
+    value_type* m_data = m_buffer;
 
     /** Bytes to but not including '\0' */
-    size_type   m_length;
+    size_type   m_length = 0;
 
     /** Total size of m_data including '\0', or 0 if m_data is in a const segment. This is actually
         implemented in the m_hider.data property in practice. */
@@ -136,7 +222,7 @@ protected:
     mutable struct _AllocHider : public Allocator {
         _AllocHider() { }
         _AllocHider(size_t data) : data(data) { }
-        size_t      data;
+        size_t      data = INTERNAL_SIZE;
     } m_hider;
 
     inline static void memcpy(void* dst, const void* src, size_t count) {
@@ -186,7 +272,7 @@ protected:
 
     constexpr void free(void* p, size_t oldSize) const {
         if (p != m_buffer) {
-            return m_allocator.deallocate(static_cast<value_type*>(p), oldSize);
+            m_allocator.deallocate(static_cast<value_type*>(p), oldSize);
         }
     }
 
@@ -198,7 +284,7 @@ protected:
      *  Note: Calling functions are expected to +1 for the null terminator */
     constexpr inline static size_t chooseAllocationSize(size_t L) {
         // Avoid allocating more than internal size unless required, but always allocate at least the internal size
-        return (L <= INTERNAL_SIZE) ? INTERNAL_SIZE : std::max((size_t)(2 * L + 1), (size_t)64);
+        return (L <= INTERNAL_SIZE) ? INTERNAL_SIZE : std::max((size_t)(2 * L + 1), (size_t) (2 * INTERNAL_SIZE + 1));
     }
 
     constexpr void prepareToMutate() {
@@ -228,8 +314,8 @@ protected:
         if (m_allocated) {
             // Free previously allocated data
             free(m_data, m_allocated);
-            m_data = nullptr;
-            m_allocated = 0;
+            m_data = m_buffer;
+            m_allocated = INTERNAL_SIZE;
         }
     }
 
@@ -252,12 +338,74 @@ protected:
         m_data = (value_type*)alloc(m_allocated);
     }
 
+    // primary template handles types that have no nested ::iterator_category:
+    template<class InputIter, class = void>
+    static inline constexpr bool is_iterator = false;
+
+    // specialization recognizes types that do have a nested ::iterator_category:
+    template<class InputIter>
+    static inline constexpr bool is_iterator<InputIter, std::void_t<typename std::iterator_traits<InputIter>::iterator_category>> = true;
+
+    #define ITERATOR_TRAITS template<typename InputIter, std::enable_if_t<is_iterator<InputIter>, int> = 0>
+
+    // Construct for input iterators, which do not implement operator-
+    ITERATOR_TRAITS
+    inline void m_construct(InputIter first, InputIter last, std::input_iterator_tag t)
+    {
+        m_length = 0;
+        // first allocate to buffer
+        m_data = (value_type*)alloc(INTERNAL_SIZE);
+
+        while ((first != last) && m_length < m_allocated) {
+            m_data[m_length++] = *first++;
+        }
+
+        while (first != last){
+            if (m_length == m_allocated){
+                // chooseAllocation will allocate 2x the requested amount
+                ensureAllocation(m_length + 1);
+            }
+            m_data[m_length++] = *first++;
+        }
+        
+        m_data[m_length] = '\0';
+    }
+
+    // Construct for all other iterators (forward, random access, const char*, etc.)
+    ITERATOR_TRAITS
+    inline void m_construct(InputIter first, InputIter last, std::forward_iterator_tag t)
+    {
+        m_length = last - first;
+        // Allocate more than needed for fast append
+        m_allocated = chooseAllocationSize(m_length + 1);
+        m_data = (value_type*)alloc(m_allocated);
+
+        value_type *d = static_cast<value_type*>(m_data);
+        while (first != last) {
+            *d++ = *first++;
+        }
+        
+        m_data[m_length] = '\0';
+    }
+
+    // memcpy for iterators
+    ITERATOR_TRAITS
+    inline static void* memcpy(void * dest, InputIter first, InputIter last)
+    {
+        value_type *d = static_cast<value_type*>(dest);
+        InputIter s = first;
+        while (s < last) {
+            *d++ = *s++;
+        }
+        return dest;
+    }
+
 public:
 
     static const size_type npos = size_type(-1);
 
     /** Creates a zero-length string */
-    constexpr inline SIMDString() : m_data(m_buffer), m_length(0), m_hider(INTERNAL_SIZE) {
+    constexpr inline SIMDString(): m_data(m_buffer), m_length(0), m_hider(INTERNAL_SIZE) {
         m_buffer[0] = '\0';
     }
 
@@ -283,7 +431,7 @@ public:
             m_allocated = 0;
         }
         else {
-            m_allocated = str.m_allocated - pos;
+            m_allocated = chooseAllocationSize(m_length + 1);
             // Clone the value, putting it in the internal storage if possible
             m_data = (value_type*)alloc(m_allocated);
 
@@ -302,7 +450,7 @@ public:
     constexpr SIMDString(const SIMDString& str, size_type pos, size_type count) {
         // cannot point to const string 
         m_length = (count == npos || pos + count >= str.size()) ? str.size() - pos : count;
-        m_allocated = m_length + 1;
+        m_allocated = chooseAllocationSize(m_length + 1);
         m_data = (value_type*)alloc(m_allocated);
         if ((m_data == m_buffer) && (str.m_data == str.m_buffer) && !(pos % SSO_ALIGNMENT)) {
             memcpyBuffer(m_data, str.m_data + pos, INTERNAL_SIZE - pos);
@@ -337,19 +485,24 @@ public:
         m_data[m_length] = '\0';
     }
 
-    constexpr SIMDString(SIMDString&& str) {
+    constexpr SIMDString(const value_type* s, size_type pos, size_type count)
+        : m_length(count)
+    {
+        // Allocate more than needed for fast append
+        m_allocated = chooseAllocationSize(m_length + 1);
+        m_data = (value_type*)alloc(m_allocated);
+        memcpy(m_data, s + pos, m_length);
+        m_data[m_length] = '\0';
+    }
+
+    constexpr SIMDString(SIMDString&& str) noexcept {
         swap(str);
     }
 
     // These aren't passed by reference because this was the signature on basic_string
-    constexpr SIMDString(const iterator first, const iterator last) {
-        m_length = last - first;
-        m_allocated = m_length;
-
-        // Copy the value, since it's unknown if it's a substring or not
-        m_data = (value_type*)alloc(m_allocated);
-        memcpy(m_data, first, m_length);
-        m_data[m_length] = '\0';
+    ITERATOR_TRAITS
+    constexpr SIMDString(InputIter first, InputIter last)  {
+        m_construct(first, last, std::iterator_traits<InputIter>::iterator_category());
     }
 
     // explicit to prevent auto casting
@@ -358,7 +511,7 @@ public:
         // Allocate more than needed for fast append
         m_allocated = chooseAllocationSize(m_length + 1);
         m_data = (value_type*)alloc(m_allocated);
-        memcpy(m_data, str.c_str() + pos, m_length);
+        memcpy(m_data, str.data() + pos, m_length);
         m_data[m_length] = '\0';
     }
 
@@ -372,8 +525,8 @@ public:
     }
 
     explicit constexpr SIMDString(std::string_view& sv, size_type pos = 0) : m_length(sv.size() - pos) {
-        if (::inConstSegment(sv.data())) {
-            m_data = sv.data() + pos;
+        if (::inConstSegment(sv.data() + pos) && sv.data()[pos + m_length] == '\0') {
+            m_data = const_cast<value_type*>(sv.data() + pos);
             m_allocated = 0;
         }
         else {
@@ -435,6 +588,7 @@ public:
 
     constexpr SIMDString& operator=(SIMDString&& str) {
         swap(str);
+        str.clear();
         return *this;
     }
 
@@ -453,6 +607,16 @@ public:
             // Clone the other value, putting it in the internal storage if possible
             memcpy(m_data, s, m_length + 1);
         }
+        return *this;
+    }
+
+    constexpr SIMDString& operator=(const std::string& str) {
+        m_length = str.length();
+        // free and/or allocate memory if necessary.
+        maybeReallocate(m_length + 1);
+        // Clone the other value, putting it in the internal storage if possible
+        memcpy(m_data, str.data(), m_length + 1);
+
         return *this;
     }
 
@@ -554,13 +718,15 @@ public:
         return (*this) = str;
     }
 
-    constexpr SIMDString& assign(const_iterator first, const_iterator last) {
+    ITERATOR_TRAITS
+    constexpr SIMDString& assign(InputIter first, InputIter last)
+    {
         m_length = last - first;
         // free and/or allocate memory if necessary. 
         maybeReallocate(m_length + 1);
 
         // Clone the other value, putting it in the internal storage if possible
-        memcpy(m_data, first, m_length);
+        memcpy(m_data, first, last);
         m_data[m_length] = '\0';
         return *this;
     }
@@ -598,7 +764,11 @@ public:
         return m_data;
     }
 
-    constexpr const value_type* data() const {
+    constexpr const value_type* data() const noexcept {
+        return m_data;
+    }
+
+    constexpr value_type* data() noexcept {
         return m_data;
     }
 
@@ -653,12 +823,20 @@ public:
     // iterators
     constexpr iterator begin() {
         prepareToMutate();
-        return m_data;
+        return iterator(m_data);
     }
 
     constexpr iterator end() {
         prepareToMutate();
-        return m_data ? m_data + m_length : nullptr;
+        return iterator(m_data + m_length);
+    }
+
+    constexpr const_iterator begin() const {
+        return const_iterator(m_data);
+    }
+
+    constexpr const_iterator end() const {
+        return const_iterator(m_data + m_length);
     }
 
     constexpr const_iterator cbegin() const {
@@ -666,7 +844,7 @@ public:
     }
 
     constexpr const_iterator cend() const {
-        return m_data ? m_data + m_length : nullptr;
+        return const_iterator(m_data + m_length);
     }
 
     // std::reverse_iterator in cpp2017 or older don't have constexpr constructors
@@ -678,7 +856,15 @@ public:
 
     reverse_iterator rend() {
         prepareToMutate();
-        return m_data ? reverse_iterator(m_data) : reverse_iterator();
+        return reverse_iterator(m_data);
+    }
+
+    const_reverse_iterator rbegin() const {
+        return const_reverse_iterator(m_data + m_length);
+    }
+
+    const_reverse_iterator rend() const {
+        return const_reverse_iterator(m_data);
     }
 
     const_reverse_iterator crbegin() const
@@ -687,7 +873,7 @@ public:
     }
 
     const_reverse_iterator crend() const {
-        return m_data ? const_reverse_iterator(m_data) : const_reverse_iterator();
+        return const_reverse_iterator(m_data);
     }
 
     constexpr size_type size() const {
@@ -751,13 +937,14 @@ public:
     }
 
     constexpr void shrink_to_fit() {
-        if (m_allocated != m_length + 1) {
+        // only shrink if heap allocation
+        if (!inConst() && (m_data != m_buffer) && (m_allocated != m_length + 1)) {
             value_type* old = m_data;
             size_type oldSize = m_allocated;
             m_allocated = chooseAllocationSize(m_length + 1);
             m_data = (value_type*)alloc(m_allocated);
-            memcpy(m_data, old, m_length);
-            if (!::inConstSegment(old)) { free(old, oldSize); }
+            memcpy(m_data, old, m_length + 1);
+            free(old, oldSize);
         }
     }
 
@@ -798,17 +985,41 @@ public:
 
     constexpr iterator insert(const_iterator pos, value_type c) {
         if (pos == end()) {
-            return append(c);
+            append(c);
+        } else {
+            replace(pos - m_data, 0, 1, c);
         }
-        replace(pos - m_data, 0, 1, c);
-        return m_data + pos;
+        return iterator(m_data + (pos - begin()));
     }
 
-    constexpr SIMDString& insert(const_iterator pos, std::initializer_list<value_type> ilist) {
+    constexpr iterator insert(const_iterator pos, size_type count, value_type c) {
+        if (pos == end()) {
+            return append(count, c);
+        } else {
+            replace(pos - m_data, 0, count, c);
+        }
+        return iterator(m_data + (pos - begin()));
+    }
+
+    
+    ITERATOR_TRAITS
+    constexpr iterator insert(const_iterator pos, InputIter first, InputIter last)
+    {
+        if (pos == end()) {
+            append(first, last);
+        } else {
+            replace(pos, pos, first, last);
+        }
+        return iterator(m_data + (pos - begin()));
+    }
+
+    constexpr iterator insert(const_iterator pos, std::initializer_list<value_type> ilist) {
         if (pos == end()) {
             return append(ilist.begin());
+        } else {
+            return replace(pos - m_data, 0, ilist.begin(), ilist.size());
         }
-        return replace(pos - m_data, 0, ilist.begin(), ilist.size());
+        return pos;
     }
 
     constexpr SIMDString& insert(size_type pos, std::string_view& sv) {
@@ -826,7 +1037,7 @@ public:
         return replace(pos, 0, sv.begin() + pos2, count);
     }
 
-    constexpr void resize(size_type count, value_type c = 0) {
+    constexpr void resize(size_type count, value_type c = '\0') {
         if (count < m_length) {
             m_data[m_length = count] = '\0';
         }
@@ -835,7 +1046,7 @@ public:
         }
     }
 
-    constexpr size_type copy(pointer dest, size_type count, size_type pos = 0) {
+    constexpr size_type copy(pointer dest, size_type count, size_type pos = 0) const {
         size_type cpyCount = pos + count > m_length ? m_length - pos : count;
 
         // the resulting string of copy is not null terminated
@@ -862,12 +1073,12 @@ public:
     }
 
     constexpr SIMDString& replace(size_type pos, size_type count, const value_type* s, size_type count2) {
-        assert(pos <= m_length && max_size() >= m_length + std::abs((int)(count - count2))); // "Index out of bounds");
+        long sizeDiff = (long) (count2 - count);
+
+        assert(pos <= m_length && max_size() >= m_length + sizeDiff); // "Index out of bounds");
         if (pos == m_length) {
             return append(s, count2);
         }
-
-        long sizeDiff = (long) (count2 - count);
 
         if (sizeDiff > 0) { // count < count2 -> insert
             size_type newSize = m_length + sizeDiff + 1;
@@ -910,21 +1121,62 @@ public:
         return replace(first - m_data, last - first, s, count2);
     }
 
-    constexpr SIMDString &replace(const_iterator first, const_iterator last, iterator first2, iterator last2) {
+    ITERATOR_TRAITS
+    constexpr SIMDString& replace(const_iterator first, const_iterator last, InputIter first2, InputIter last2)
+    {
+        size_type count = last - first;
+        size_type count2 = last2 - first2;
+        long sizeDiff = (long) (count2 - count);
+
+        assert(first <= end() && max_size() >= m_length + sizeDiff); // "Index out of bounds");
+        
         if (last == end()) {
-            return append(first2, last2 - first2);
+            return append(first, last);
         }
-        return replace(first - m_data, last - first, first2, last2 - first2);
+
+        size_type pos = first - begin();
+        if (sizeDiff > 0) { // count < count2 -> insert
+            size_type newSize = m_length + sizeDiff + 1;
+            if (((m_allocated < newSize) && !((m_data == m_buffer) && (newSize <= INTERNAL_SIZE))) || inConst()) {
+                // Allocate a new string and copy over first n values
+                value_type* old = m_data;
+                size_type oldSize = m_allocated;
+                m_allocated = chooseAllocationSize(newSize);
+                m_data = (value_type*)alloc(m_allocated);
+                // copy [old, old + pos) to [m_data, m_data + pos)
+                memcpy(m_data, old, pos);
+                // copy [old + pos + count, old + m_length) to [m_data + pos + count2, m_data + newSize)
+                memcpy(m_data + pos + count2, old + pos + count, m_length - pos - count + 1);
+                if (!::inConstSegment(old)) { free(old, oldSize); }
+            }
+            else {
+                // move [m_data + pos + count, m_data + m_length) to [m_data + pos + count2, m_data + newSize)
+                memmove(m_data + pos + count2, m_data + pos + count, m_length - pos - count + 1);
+            }
+            memcpy(m_data + pos, first2, last2);
+            m_length += sizeDiff;
+        }
+        else if (sizeDiff < 0) { // count > count2 
+            prepareToMutate();
+            memcpy(m_data + pos, first2, last2);
+            memmove(m_data + pos + count2, m_data + pos + count, m_length - pos - count + 1);
+            m_length += sizeDiff;
+        }
+        else {
+            prepareToMutate();
+            memcpy(m_data + pos, first2, last2);
+        }
+        return (*this);
     }
 
-    constexpr SIMDString &replace(size_type pos, size_type count, const value_type *s) {
+    constexpr SIMDString& replace(size_type pos, size_type count, const value_type *s) {
         if (pos == m_length) {
             return append(s, ::strlen(s));
         }
         return replace(pos, count, s, ::strlen(s));
     }
 
-    constexpr SIMDString &replace(const_iterator first, const_iterator last, const value_type *s) {
+    constexpr SIMDString& replace(const_iterator first, const_iterator last, const value_type *s) {
         if (last == end()) {
             return append(s, ::strlen(s));
         }
@@ -942,7 +1194,7 @@ public:
         // count < count2
         if (sizeDiff > 0) { 
             size_type newSize = m_length + sizeDiff + 1;
-            if (((m_allocated < newSize + 1) && !((m_data == m_buffer) && (newSize < INTERNAL_SIZE))) || inConst()) {
+            if (((m_allocated < newSize) && !((m_data == m_buffer) && (newSize < INTERNAL_SIZE))) || inConst()) {
                 // Allocate a new string and copy over first n values
                 value_type* old = m_data;
                 size_type oldSize = m_allocated;
@@ -1011,7 +1263,12 @@ public:
     }
 
     constexpr void clear() {
-        *this = SIMDString();
+        if (inConst()) {
+            m_data = m_buffer;
+            m_allocated = INTERNAL_SIZE;
+        }
+        m_length = 0;
+        *m_data = '\0';
     }
 
     constexpr SIMDString& erase(size_type pos = 0, size_type count = npos) {
@@ -1043,21 +1300,22 @@ public:
         return *this;
     }
 
-    constexpr iterator erase(const_iterator pos) {
+    constexpr iterator erase(iterator pos) {
         size_type n = pos - m_data;
         erase(n, 1);
-        return m_data + n;
+        return iterator(m_data + n);
     }
 
-    constexpr iterator erase(const_iterator first, const_iterator last) {
+    constexpr iterator erase(iterator first, iterator last) {
         size_type n = first - m_data;
-        if (n == m_length) {
+        size_type count = last - first;
+        if (!n && count == m_length) {
             clear();
         }
         else {
-            erase(n, last - first);
+            erase(n, count);
         }
-        return m_data + n;
+        return iterator(m_data + n);
     }
 
     constexpr SIMDString operator+(const SIMDString& str) const {
@@ -1094,6 +1352,20 @@ public:
 
         // Copy s to output string
         memcpy(result.m_data + m_length, s, L + 1);
+        return result;
+    }
+
+    constexpr friend SIMDString operator+(const value_type* rhs, SIMDString str) {
+        const size_type L(::strlen(rhs));
+        SIMDString result;
+        result.m_length = str.m_length + L;
+        result.m_allocated = chooseAllocationSize(result.m_length + 1);
+        result.m_data = (value_type*)result.alloc(result.m_allocated);
+
+        // Copy s to output string
+        memcpy(result.m_data, rhs, L);
+        memcpy(result.m_data + L, str.m_data, str.m_length + 1);
+
         return result;
     }
 
@@ -1142,7 +1414,7 @@ public:
     }
 
     constexpr SIMDString& operator+=(std::string_view sv) {
-        return this->append(sv.begin(), sv.size());
+        return this->append(sv.data(), sv.size());
     }
 
     constexpr void push_back(value_type c) {
@@ -1168,16 +1440,14 @@ public:
     constexpr SIMDString& append(size_type count, value_type c) {
         ensureAllocation(m_length + count + 1);
         ::memset(m_data + m_length, c, count);
-        m_length += count;
-        m_data[m_length] = '\0';
+        m_data[m_length += count] = '\0';
         return *this;
     }
 
     constexpr SIMDString& append(const value_type* s, size_type t) {
         ensureAllocation(m_length + t + 1);
         memcpy(m_data + m_length, s, t);
-        m_length += t;
-        m_data[m_length] = '\0';
+        m_data[m_length += t] = '\0';
         return *this;
     }
 
@@ -1185,8 +1455,14 @@ public:
         return (*this) += s;
     }
 
-    constexpr SIMDString& append(iterator first, iterator last) {
-        return append(first, last - first);
+    ITERATOR_TRAITS
+    constexpr SIMDString& append(InputIter first, InputIter last)
+    {
+        size_type t = last - first;
+        ensureAllocation(m_length + t + 1);
+        memcpy(m_data + m_length, first, last);
+        m_data[m_length += t] = '\0';
+        return *this;
     }
 
     constexpr SIMDString& append(std::initializer_list<value_type> ilist) {
@@ -1248,11 +1524,11 @@ public:
     }
 
     constexpr SIMDString substr(size_type pos, size_type count = npos) const {
-        const size_type slen = std::max((size_type)0, std::min(m_length - pos, count));
+        assert(pos < m_length); // "Index out of bounds");
+        const size_type slen = std::min(m_length - pos, count);
         if (slen == 0) { return SIMDString(); }
 
-        // If copying from a const segment and ending at the end of the string, do not allocate
-        if (inConst() && (m_length == pos + slen)) {
+        if (m_length == pos + slen) {
             return SIMDString(m_data + pos);
         }
         else {
@@ -1273,7 +1549,7 @@ public:
     }
 
     constexpr size_type find(const SIMDString& str, size_type pos = 0) const {
-        return find(str.c_str(), pos, str.m_length);
+        return find(str.m_data, pos, str.m_length);
     }
 
     constexpr size_type find(const value_type* s, size_type pos = 0) const {
@@ -1290,30 +1566,35 @@ public:
             return pos;
         }
 
-        value_type* pFound = static_cast<value_type*>(memchr(m_data + pos, *s, m_length));
+        value_type* pFound = static_cast<value_type*>(memchr(m_data + pos, *s, m_length - pos));
         size_type i = static_cast<size_type>(pFound - m_data);
 
         while (pFound && (i + count) <= m_length) {
             if (memcmp(pFound, s, count) == 0) {
                 return i;
             }
-            pFound = static_cast<value_type*>(memchr(pFound + 1, *s, m_length));
+            pFound = static_cast<value_type*>(memchr(pFound + 1, *s, m_length - i - 1));
             i = static_cast<size_type>(pFound - m_data);
         }
         return npos;
     }
 
     constexpr size_type find(value_type c, size_type pos = 0) const {
-        value_type* pFound = (value_type*)memchr(m_data + pos, c, m_length);
-        return static_cast<size_type>(pFound - m_data);
+        if (pos >= m_length) {
+            return npos;
+        }
+
+        value_type* pFound = (value_type*)memchr(m_data + pos, c, m_length - pos);
+        if (pFound) return static_cast<size_type>(pFound - m_data);
+        else return npos;
     }
 
     constexpr size_type find(const std::string_view& sv, size_type pos = 0) const {
-        return find(sv.begin(), 0, sv.size());
+        return find(sv.begin(), pos, sv.size());
     }
 
     constexpr size_type rfind(const SIMDString& str, size_type pos = npos) const {
-        return rfind(str.c_str(), pos, str.m_length);
+        return rfind(str.m_data, pos, str.m_length);
     }
 
     constexpr size_type rfind(const value_type* s, size_type pos = npos) const {
@@ -1351,8 +1632,8 @@ public:
         return npos;
     }
 
-    constexpr size_type rfind(const std::string_view& sv, size_type pos = 0) const {
-        return rfind(sv.begin(), 0, sv.size());
+    constexpr size_type rfind(const std::string_view& sv, size_type pos = npos) const {
+        return rfind(sv.begin(), pos, sv.size());
     }
 
     constexpr size_type find_first_of(const value_type* s, size_type pos, size_type count) const {
@@ -1373,7 +1654,7 @@ public:
     }
 
     constexpr size_type find_first_of(const SIMDString& str, size_type pos = 0) const {
-        return find_first_of(str.c_str(), pos, str.length());
+        return find_first_of(str.m_data, pos, str.m_length);
     }
 
     constexpr size_type find_first_of(const value_type* s, size_type pos = 0) const {
@@ -1385,7 +1666,7 @@ public:
             return npos;
         }
 
-        value_type* pFound = static_cast<value_type*>(memchr(m_data + pos, c, m_length));
+        value_type* pFound = static_cast<value_type*>(memchr(m_data + pos, c, m_length - pos));
         if (pFound) {
             return pFound - m_data;
         }
@@ -1393,7 +1674,7 @@ public:
     }
 
     constexpr size_type find_first_of(const std::string_view& sv, size_type pos = 0) const {
-        return find_first_of(sv.begin(), 0, sv.size());
+        return find_first_of(sv.begin(), pos, sv.size());
     }
 
     constexpr size_type find_first_not_of(const value_type* s, size_type pos, size_type count) const {
@@ -1414,7 +1695,7 @@ public:
     }
 
     constexpr size_type find_first_not_of(const SIMDString& str, size_type pos = 0) const {
-        return find_first_not_of(str.c_str(), pos, str.length());
+        return find_first_not_of(str.m_data, pos, str.m_length);
     }
 
     constexpr size_type find_first_not_of(const value_type* s, size_type pos = 0) const {
@@ -1438,7 +1719,7 @@ public:
     }
 
     constexpr size_type find_first_not_of(const std::string_view& sv, size_type pos = 0) const {
-        return find_first_not_of(sv.begin(), 0, sv.size());
+        return find_first_not_of(sv.begin(), pos, sv.size());
     }
 
     constexpr size_type find_last_of(const value_type* s, size_type pos, size_type count) const {
@@ -1455,7 +1736,7 @@ public:
     }
 
     constexpr size_type find_last_of(const SIMDString& str, size_type pos = npos) const {
-        return find_last_of(str.c_str(), pos, str.length());
+        return find_last_of(str.m_data, pos, str.m_length);
     }
 
     constexpr size_type find_last_of(const value_type* s, size_type pos = npos) const {
@@ -1475,16 +1756,15 @@ public:
     }
 
     constexpr size_type find_last_of(const std::string_view& sv, size_type pos = 0) const {
-        return find_last_of(sv.begin(), 0, sv.size());
+        return find_last_of(sv.begin(), pos, sv.size());
     }
 
     constexpr size_type find_last_not_of(const value_type* s, size_type pos, size_type count) const {
         // search [m_data, m_data + pos]
         size_type i = std::min(m_length - 1, pos);
-        value_type* leftBound = m_data;
 
         do {
-            if (!memchr(s, *(leftBound + i), count)) {
+            if (!memchr(s, *(m_data + i), count)) {
                 return i;
             }
         } while (i--);
@@ -1493,7 +1773,7 @@ public:
     }
 
     constexpr size_type find_last_not_of(const SIMDString& str, size_type pos = npos) const {
-        return find_last_not_of(str.c_str(), pos, str.length());
+        return find_last_not_of(str.m_data, pos, str.m_length);
     }
 
     constexpr size_type find_last_not_of(const value_type* s, size_type pos = npos) const {
@@ -1502,10 +1782,9 @@ public:
 
     constexpr size_type find_last_not_of(value_type c, size_type pos = npos) const {
         size_type i = std::min(m_length - 1, pos);
-        value_type* leftBound = m_data;
 
         do {
-            if (c != *(leftBound + i)) {
+            if (c != *(m_data + i)) {
                 return i;
             }
         } while (i--);
@@ -1514,7 +1793,7 @@ public:
     }
 
     constexpr size_type find_last_not_of(const std::string_view& sv, size_type pos = 0) const {
-        return find_last_not_of(sv.begin(), 0, sv.size());
+        return find_last_not_of(sv.begin(), pos, sv.size());
     }
 
 private:
@@ -1522,7 +1801,7 @@ private:
     // Does not stop for internal null terminators.  Does not include the null
     // terminators.
     // See http://www.cplusplus.com/reference/string/string/compare/
-    constexpr int compare(const value_type* a, size_type alen, const value_type* b, size_type blen) const noexcept {
+    constexpr inline int m_compare(const value_type* a, size_type alen, const value_type* b, size_type blen) const noexcept {
         const size_type count = std::min(alen, blen);
         int res = memcmp(a, b, count);
         return res ? res : (int) (alen - blen);
@@ -1535,57 +1814,74 @@ public:
             return 0;
         }
         else {
-            return compare(m_data, m_length, str.m_data, str.m_length);
+            return m_compare(m_data, m_length, str.m_data, str.m_length);
         }
     }
 
     constexpr int compare(size_type pos, size_type count, const SIMDString& str) const {
-        return compare(m_data + pos, std::min(m_length - pos, count), str.m_data, str.m_length);
+        return m_compare(m_data + pos, std::min(m_length - pos, count), str.m_data, str.m_length);
     }
 
     constexpr int compare(size_type pos, size_type count1, const SIMDString& str, size_type pos2, size_type count2) const {
-        return compare(m_data + pos, std::min(m_length - pos, count1), str.m_data + pos2, std::min(str.m_length - pos2, count2));
+        return m_compare(m_data + pos, std::min(m_length - pos, count1), str.m_data + pos2, std::min(str.m_length - pos2, count2));
     }
 
     constexpr int compare(const value_type* s) const {
-        return compare(m_data, m_length, s, ::strlen(s));
+        return m_compare(m_data, m_length, s, ::strlen(s));
     }
 
     constexpr int compare(size_type pos, size_type count, const value_type* s) const {
-        return compare(m_data + pos, std::min(m_length - pos, count), s, ::strlen(s));
+        return m_compare(m_data + pos, std::min(m_length - pos, count), s, ::strlen(s));
     }
 
     constexpr int compare(size_type pos, size_type count1, const value_type* s, size_type count2) const {
-        return compare(m_data + pos, std::min(m_length - pos, count1), s, count2);
+        return m_compare(m_data + pos, std::min(m_length - pos, count1), s, count2);
     }
 
     constexpr int compare(const std::string_view& sv) const noexcept {
-        return compare(m_data, m_length, sv.begin(), sv.size());
+        return m_compare(m_data, m_length, sv.data(), sv.size());
     }
 
     constexpr int compare(size_type pos, size_type count, const std::string_view& sv) const {
-        return compare(m_data + pos, count, sv.begin(), sv.size());
+        return m_compare(m_data + pos, count, sv.data(), sv.size());
     }
 
     constexpr int compare(size_type pos, size_type count1, const std::string_view& sv, size_type pos2, size_type count2) const {
-        return compare(m_data + pos, count1, sv.begin() + pos2, count2);
+        return m_compare(m_data + pos, count1, sv.data() + pos2, count2);
     }
 
-    constexpr bool operator==(const SIMDString& s) const {
-        return (m_length == s.m_length) && ((m_data == s.m_data) || !memcmp(m_data, s.m_data, m_length));
+    friend constexpr inline bool operator==(const std::string_view sv, const SIMDString& str) {
+        return ((sv.length() == str.m_length) && (sv.data() == str.m_data)) || !str.compare(sv);
     }
 
-    constexpr bool operator==(const value_type* s) const {
-        return (m_length == ::strlen(s)) && ((m_data == s) || !memcmp(m_data, s, m_length));
+    friend constexpr inline bool operator==(const value_type* s, const SIMDString& str) {
+        return str == s;
     }
 
-    constexpr bool operator!=(const SIMDString& s) const {
+    constexpr inline bool operator==(const SIMDString& str) const {
+        return ((m_length == str.m_length) && (m_data == str.m_data)) || !m_compare(m_data, m_length, str.m_data, str.m_length);
+    }
+
+    constexpr inline bool operator==(const value_type* s) const {
+        return ((m_length == ::strlen(s)) && (m_data == s)) || !m_compare(m_data, m_length, s, ::strlen(s));
+    }
+
+    constexpr inline bool equals(const SIMDString& str) const {
+        return ((m_length == str.m_length) && (m_data == str.m_data)) || !m_compare(m_data, m_length, str.m_data, str.m_length);
+    }
+
+    constexpr inline bool operator!=(const SIMDString& s) const {
         return !(*this == s);
     }
 
-    constexpr bool operator!=(const value_type* s) const {
+    constexpr inline bool operator!=(const value_type* s) const {
         return !(*this == s);
     }
+
+    friend constexpr inline bool operator!=(const value_type* s, const SIMDString& str) {
+        return str != s;
+    }
+
 
     constexpr bool operator>(const SIMDString& s) const {
         return compare(s) > 0;
@@ -1602,6 +1898,24 @@ public:
     constexpr bool operator<=(const SIMDString& s) const {
         return compare(s) <= 0;
     }
+
+    friend constexpr inline bool operator<(const value_type* s, const SIMDString& str) {
+        return !(str.compare(s) <= 0);
+    }
+
+    friend constexpr inline bool operator<=(const value_type* s, const SIMDString& str) {
+        return str.compare(s) > 0;
+    }
+
+    friend constexpr inline bool operator>(const value_type* s, const SIMDString& str) {
+        return !(str.compare(s) >= 0);
+    }
+
+    friend constexpr inline bool operator>=(const value_type* s, const SIMDString& str) {
+        return str.compare(s) < 0;
+    }
+
+
 }
 #ifdef __APPLE__
 __attribute__((__aligned__(SSO_ALIGNMENT)))
@@ -1609,7 +1923,6 @@ __attribute__((__aligned__(SSO_ALIGNMENT)))
 ;
 
 #undef m_allocated
-
 
 TEMPLATE inline SIMDString<INTERNAL_SIZE, Allocator> operator+(const typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* s1, const SIMDString<INTERNAL_SIZE, Allocator>& s2) {
     return SIMDString<INTERNAL_SIZE, Allocator>(s1) + s2;
@@ -1621,26 +1934,76 @@ TEMPLATE inline SIMDString<INTERNAL_SIZE, Allocator> operator+(const typename SI
 
 TEMPLATE inline SIMDString<INTERNAL_SIZE, Allocator> operator+(const SIMDString<INTERNAL_SIZE, Allocator>&& s1,
     SIMDString<INTERNAL_SIZE, Allocator>&& s2) {
-    return std::move(s1.append(s2));
+    SIMDString<INTERNAL_SIZE, Allocator>tmp(s1);
+    return static_cast<typename std::remove_reference<SIMDString<INTERNAL_SIZE, Allocator>>::type&&>(tmp.append(s2));
 }
 
 TEMPLATE inline SIMDString<INTERNAL_SIZE, Allocator> operator+(const SIMDString<INTERNAL_SIZE, Allocator>&& s1,
     const SIMDString<INTERNAL_SIZE, Allocator>& s2) {
-    return std::move(s1.append(s2));
+    SIMDString<INTERNAL_SIZE, Allocator>tmp(s1);
+    return static_cast<typename std::remove_reference<SIMDString<INTERNAL_SIZE, Allocator>>::type&&>(tmp.append(s2));
 }
 
 TEMPLATE inline SIMDString<INTERNAL_SIZE, Allocator> operator+(const SIMDString<INTERNAL_SIZE, Allocator>&& s1,
     const typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* rhs) {
-    return std::move(s1.append(rhs));
+    SIMDString<INTERNAL_SIZE, Allocator>tmp(s1);
+    return static_cast<typename std::remove_reference<SIMDString<INTERNAL_SIZE, Allocator>>::type&&>(tmp.append(rhs));
 }
 
 TEMPLATE inline SIMDString<INTERNAL_SIZE, Allocator> operator+(const SIMDString<INTERNAL_SIZE, Allocator>&& s1,
     const typename SIMDString<INTERNAL_SIZE, Allocator>::value_type rhs) {
-    return std::move(s1.append(rhs));
+    SIMDString<INTERNAL_SIZE, Allocator>tmp(s1);
+    return static_cast<typename std::remove_reference<SIMDString<INTERNAL_SIZE, Allocator>>::type&&>(tmp.append(rhs));
 }
 
-TEMPLATE std::ostream& operator<<(std::ostream& os, const SIMDString<INTERNAL_SIZE, Allocator>& str) {
-    return os << str.c_str();
+
+TEMPLATE std::ostream& operator<<(std::ostream& os, const SIMDString<INTERNAL_SIZE, Allocator>& str)
+{
+    std::ostream::sentry sen(os);
+    if (sen) {
+        try {
+            const std::streamsize w = os.width();
+
+            if (w > (std::streamsize) str.size()) {
+                const bool left = ((os.flags() & std::ostream::adjustfield) == std::ostream::left);
+
+                if (!left) {    
+                    const SIMDString<INTERNAL_SIZE, Allocator>::value_type c = os.fill();
+                    for (std::streamsize fillN = w - str.size(); fillN > 0; --fillN)
+                    {
+                        if (os.rdbuf()->sputc(c) == EOF) {
+                            os.setstate(std::ostream::badbit);
+                            break;
+                        }
+                    }
+                }
+
+                if (os.good() && (os.rdbuf()->sputn(str.data(), str.size()) != str.size())){
+                    os.setstate(std::ostream::badbit);
+                }
+                
+                if (left && os.good()){
+                    const SIMDString<INTERNAL_SIZE, Allocator>::value_type c = os.fill();
+                    for (std::streamsize fillN = w - str.size(); fillN > 0; --fillN)
+                    {
+                        if (os.rdbuf()->sputc(c) == EOF) {
+                            os.setstate(std::ostream::badbit);
+                            break;
+                        }
+                    }
+                }
+		    }
+	        else if (os.rdbuf()->sputn(str.data(), str.size()) != str.size()){
+                os.setstate(std::ostream::badbit);
+            }
+	        os.width(0);
+	    }
+	    catch(...)
+	    { 
+            os.setstate(std::ostream::badbit); 
+        }
+	}
+    return os;
 }
 
 TEMPLATE std::istream& operator>>(std::istream& is, SIMDString<INTERNAL_SIZE, Allocator>& str)
@@ -1654,8 +2017,7 @@ TEMPLATE std::istream& operator>>(std::istream& is, SIMDString<INTERNAL_SIZE, Al
         {
             str.erase();
             const typename SIMDString<INTERNAL_SIZE, Allocator>::size_type n =
-                is.width() > 0
-                    ? static_cast<typename SIMDString<INTERNAL_SIZE,Allocator>::size_type>(is.width())
+                is.width() > 0 ? static_cast<typename SIMDString<INTERNAL_SIZE, Allocator>::size_type>(is.width())
                     : str.max_size();
             typename SIMDString<INTERNAL_SIZE, Allocator>::value_type c = is.rdbuf()->sgetc();
 
@@ -1667,8 +2029,8 @@ TEMPLATE std::istream& operator>>(std::istream& is, SIMDString<INTERNAL_SIZE, Al
 
             if (numExtracted < n && c == EOF) {
                 err |= std::istream::ios_base::eofbit;
-                is.width(0);
             }
+            is.width(0);
         }
         catch (...) {
             is.setstate(std::istream::ios_base::badbit);
@@ -1686,7 +2048,8 @@ TEMPLATE std::istream& operator>>(std::istream& is, SIMDString<INTERNAL_SIZE, Al
     return is;
 }
 
-TEMPLATE std::istream& getline(std::istream& is, SIMDString<INTERNAL_SIZE, Allocator>& str, typename SIMDString<INTERNAL_SIZE, Allocator>::value_type delim = '\n')
+TEMPLATE std::istream& getline(
+    std::istream& is, SIMDString<INTERNAL_SIZE, Allocator>& str, typename SIMDString<INTERNAL_SIZE, Allocator>::value_type delim = '\n')
 {
     typename SIMDString<INTERNAL_SIZE, Allocator>::size_type numExtracted = 0;
     std::istream::ios_base::iostate  err = std::istream::ios_base::goodbit;
@@ -1705,9 +2068,13 @@ TEMPLATE std::istream& getline(std::istream& is, SIMDString<INTERNAL_SIZE, Alloc
                 c = is.rdbuf()->snextc();
             }
 
-            if (numExtracted < n && c == EOF) {
+            if (c == EOF) {
                 err |= std::istream::ios_base::eofbit;
-                is.width(0);
+            } else if (c == delim) {
+                ++numExtracted;
+                is.rdbuf()->sbumpc();
+            } else {
+                err |= std::istream::ios_base::eofbit;
             }
         }
         catch (...) {
@@ -1726,100 +2093,166 @@ TEMPLATE std::istream& getline(std::istream& is, SIMDString<INTERNAL_SIZE, Alloc
     return is;
 }
 
-TEMPLATE inline int stoi(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10) {
+
+TEMPLATE inline int stoi(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    int answer = ::strtol(str.data(), &end, base);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        int tmp = ::strtol(str.c_str(), &end, base);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtol(str.c_str(), nullptr, base);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline long stol(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10) {
+TEMPLATE inline long stol(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    long answer = ::strtol(str.data(), &end, base);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        long tmp = ::strtol(str.c_str(), &end, base);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtol(str.c_str(), nullptr, base);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline long long stoll(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10) {
+TEMPLATE inline long long stoll(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    long long answer = ::strtoll(str.data(), &end, base);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        long long tmp = ::strtoll(str.c_str(), &end, base);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtoll(str.c_str(), nullptr, base);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline unsigned long stoul(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10) {
+TEMPLATE inline unsigned long stoul(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    unsigned long answer = ::strtoul(str.data(), &end, base);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        unsigned long tmp = ::strtoul(str.c_str(), &end, base);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtoul(str.c_str(), nullptr, base);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline unsigned long long stoull(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10) {
+TEMPLATE inline unsigned long long stoull(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr, int base = 10)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    unsigned long long answer = ::strtoull(str.data(), &end, base);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        unsigned long long tmp = ::strtoull(str.c_str(), &end, base);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtoull(str.c_str(), nullptr, base);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline float stof(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr) {
+TEMPLATE inline float stof(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    float answer = ::strtof(str.data(), &end);
+    
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        float tmp = ::strtof(str.c_str(), &end);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtof(str.c_str(), nullptr);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline double stod(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr) {
+TEMPLATE inline double stod(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    double answer = ::strtod(str.data(), &end);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        double tmp = ::strtod(str.c_str(), &end);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtod(str.c_str(), nullptr);
-    }
+
+    return answer;
 }
 
-TEMPLATE inline long double stold(const SIMDString<INTERNAL_SIZE, Allocator> str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr) {
+TEMPLATE inline long double stold(
+    const SIMDString<INTERNAL_SIZE, Allocator> &str, typename SIMDString<INTERNAL_SIZE, Allocator>::size_type* pos = nullptr)
+{
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
+    long double answer = ::strtold(str.data(), &end);
+    if ( end == str.data() ) {
+        throw std::invalid_argument("invalid stof argument");
+    }
+
+    if (errno == ERANGE) {
+        throw std::out_of_range("stof argument out of range");
+    }
+
     if (pos) {
-        typename SIMDString<INTERNAL_SIZE, Allocator>::value_type* end;
-        long double tmp = ::strtold(str.c_str(), &end);
-        *pos = end - str.c_str();
-        return tmp;
+        *pos = end - str.data();
     }
-    else {
-        return ::strtold(str.c_str(), nullptr);
-    }
+
+    return answer;
 }
 
 TEMPLATE SIMDString<INTERNAL_SIZE, Allocator> to_string(int value)
@@ -1867,23 +2300,51 @@ TEMPLATE SIMDString<INTERNAL_SIZE, Allocator> to_string(unsigned long long value
 
 TEMPLATE SIMDString<INTERNAL_SIZE, Allocator> to_string(float value)
 {
-    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type str[std::numeric_limits<float>::max_exponent + std::numeric_limits<float>::max_digits10 + 6];
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type
+        str[std::numeric_limits<float>::max_exponent + std::numeric_limits<float>::max_digits10 + 6];
     sprintf(str, "%f", value);
     return SIMDString<INTERNAL_SIZE, Allocator>(str);
 }
 
 TEMPLATE SIMDString<INTERNAL_SIZE, Allocator> to_string(double value)
 {
-    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type str[std::numeric_limits<double>::max_exponent + std::numeric_limits<double>::max_digits10 + 6];
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type
+        str[std::numeric_limits<double>::max_exponent + std::numeric_limits<double>::max_digits10 + 6];
     sprintf(str, "%f", value);
     return SIMDString<INTERNAL_SIZE, Allocator>(str);
 }
 
 TEMPLATE SIMDString<INTERNAL_SIZE, Allocator> to_string(long double value)
 {
-    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type str[std::numeric_limits<long double>::max_exponent + std::numeric_limits<long double>::max_digits10 + 6];
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type
+        str[std::numeric_limits<long double>::max_exponent + std::numeric_limits<long double>::max_digits10 + 6];
     sprintf(str, "%Lf", value);
     return SIMDString<INTERNAL_SIZE, Allocator>(str);
 }
+
+    
+template <size_t _Size, class _Alloc1>
+struct std::hash<SIMDString<_Size, _Alloc1>>
+{ 
+    size_t operator()(const SIMDString<_Size, _Alloc1>& str) const noexcept
+    { 
+        // a recommended way of hashing bytes that is compiler neutral 
+        // and does not require implementing our own hash function
+        // https://learn.microsoft.com/en-us/cpp/porting/fix-your-dependencies-on-library-internals
+        return std::hash<std::string_view>{}(std::string_view(str.data()));
+    }
+};
+
+TEMPLATE 
+typename SIMDString<INTERNAL_SIZE, Allocator>::iterator begin(SIMDString<INTERNAL_SIZE, Allocator>& str) {
+    return str.begin();
+}
+
+TEMPLATE
+typename SIMDString<INTERNAL_SIZE, Allocator>::iterator end(SIMDString<INTERNAL_SIZE, Allocator>& str) {
+    return str.end();
+}
+
+
 
 #undef TEMPLATE
