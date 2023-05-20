@@ -126,7 +126,7 @@ Any arguments passed into `benchmarks/main.cpp` are passed directly into the Goo
 Talk 
 =========================================================================================================
 Zander Majercik (NVIDIA, Williams College) gave a talk at CPPCon announcing SIMDString which [can be viewed here](https://www.youtube.com/watch?v=fglXeSWGVDc).
-The slides for this talk are available in this repo. 
+The slides for this talk are available in this repo. Use Git LFS to view them. 
 
 Licensing
 =========================================================================================================
