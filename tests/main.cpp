@@ -631,6 +631,11 @@ TEST(SIMDStringTest, Swap)
   EXPECT_EQ(simdstring1.size(), string3.size());
   EXPECT_STREQ(simdstring3.c_str(), string2.c_str());
   EXPECT_EQ(simdstring3.size(), string2.size());
+
+  SIMDString<64> simdstring4(SIMDString<64>(26, 'z'));
+  SIMDString<64> simdstring5(SIMDString<64>(sampleString));
+  SIMDString<64> simdstring6(SIMDString<64>(200, 'z'));
+
 }
 
 TEST(SIMDStringTest, Find)
@@ -941,7 +946,6 @@ TEST(SIMDStringTest, FindFirstLastNotOf)
 TEST(SIMDStringTest, StartsEndsWith)
 {
   SIMDString<64> simdstring1(sampleString);
-  std::string string1(sampleString);
 
   EXPECT_TRUE(simdstring1.starts_with("the"));
   EXPECT_FALSE(simdstring1.starts_with("woah"));
@@ -951,6 +955,19 @@ TEST(SIMDStringTest, StartsEndsWith)
   EXPECT_FALSE(simdstring1.starts_with('w'));
   EXPECT_TRUE(simdstring1.ends_with('g'));
   EXPECT_FALSE(simdstring1.ends_with('h'));
+
+  const char* s = "hello world";
+  EXPECT_FALSE(SIMDString(s + 6).ends_with("hello world"));
+}
+
+TEST(SIMDStringTest, Contains)
+{
+  SIMDString<64> simdstring1(sampleString);
+
+  EXPECT_TRUE(simdstring1.contains("the"));
+  EXPECT_FALSE(simdstring1.contains("woah"));
+  EXPECT_FALSE(simdstring1.contains('T'));
+
 }
 
 TEST(SIMDStringTest, CopySubstr)

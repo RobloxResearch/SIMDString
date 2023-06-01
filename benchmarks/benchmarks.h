@@ -500,7 +500,7 @@ static void BM_Swap(benchmark::State& state)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-// This is where the benchmarks are programmatically registered .
+// This is where the benchmarks are programmatically registered.
 template <typename Str>
 void RegisterBenchmarks(const char* classname) {
     // buffer for formatting the benchmark name string into RegisterBenchmark

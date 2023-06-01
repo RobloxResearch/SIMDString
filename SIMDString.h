@@ -240,7 +240,10 @@ protected:
                 s[i] = tmp;
             }
 #       else
-            std::swap(buf1, buf2);
+            char tmp[INTERNAL_SIZE];
+            ::memcpy(tmp, buf1, INTERNAL_SIZE);
+            ::memcpy(buf1, buf2, INTERNAL_SIZE);
+            ::memcpy(buf2, tmp, INTERNAL_SIZE);
 #       endif
     }
 
@@ -1554,15 +1557,15 @@ public:
     }
 
     constexpr bool contains(std::string_view sv) const {
-        return find(sv.begin(), 0) != 0;
+        return find(sv.begin(), 0) != npos;
     }
 
     constexpr bool contains(value_type c) const {
-        return find(c, 0) != 0;
+        return find(c, 0) != npos;
     }
 
     constexpr bool contains(const_pointer s) const {
-        return find(s, 0, ::strlen(s)) != 0;
+        return find(s, 0, ::strlen(s)) != npos;
     }
 
     constexpr size_type find(const SIMDString& str, size_type pos = 0) const {
@@ -1913,8 +1916,6 @@ public:
 __attribute__((__aligned__(SSO_ALIGNMENT)))
 #endif
 ;
-
-#undef m_allocated
 
 TEMPLATE
 std::ostream& operator<<(std::ostream& os, const SIMDString<INTERNAL_SIZE, Allocator>& str) {
@@ -2333,6 +2334,7 @@ typename SIMDString<INTERNAL_SIZE, Allocator>::iterator end(SIMDString<INTERNAL_
     return str.end();
 }
 
-
-
 #undef TEMPLATE
+#undef ITERATOR_TRAITS
+#undef m_allocated
+#undef m_allocator
