@@ -1523,29 +1523,29 @@ public:
     }
 
     constexpr bool starts_with(value_type c) const {
-        return m_length > 0 && *m_data == c;
+        return m_length > 0 && *data() == c;
     }
 
     constexpr bool starts_with(const value_type* s) const {
         size_type n = ::strlen(s);
-        return m_length >= n && memcmp(s, m_data, n) == 0;
+        return m_length >= n && memcmp(s, data(), n) == 0;
     }
 
     constexpr bool starts_with(std::string_view sv) const {
-        return m_length >= sv.size() && memcmp(sv.data(), m_data, sv.size()) == 0;
+        return m_length >= sv.size() && memcmp(sv.data(), data(), sv.size()) == 0;
     }
 
     constexpr bool ends_with(value_type c) const {
-        return m_length > 0 && *(m_data + m_length - 1) == c;
+        return m_length > 0 && *(data() + m_length - 1) == c;
     }
 
     constexpr bool ends_with(const_pointer s) const {
         size_type n = ::strlen(s);
-        return m_length >= n && memcmp(s, m_data + m_length - n, n) == 0;
+        return m_length >= n && memcmp(s, data() + m_length - n, n) == 0;
     }
 
     constexpr bool ends_with(std::string_view sv) const {
-        return m_length >= sv.size() && memcmp(sv.data(), m_data + m_length - sv.size(), sv.size()) == 0;
+        return m_length >= sv.size() && memcmp(sv.data(), data() + m_length - sv.size(), sv.size()) == 0;
     }
 
     constexpr SIMDString substr(size_type pos, size_type count = npos) const {
