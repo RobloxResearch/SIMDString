@@ -2254,7 +2254,11 @@ char * uint_to_buffer(char* bufEnd, UIntType value) {
     return bufEnd; 
 }
 
+#ifdef G3D_System_h
+template<size_t INTERNAL_SIZE = 64, class Allocator = G3D::g3d_allocator<char>, typename IntType>
+#else
 template<size_t INTERNAL_SIZE = 64, class Allocator = ::std::allocator<char>, typename IntType>
+#endif
 SIMDString<INTERNAL_SIZE, Allocator>  int_to_string(IntType value) {
     const int n = std::numeric_limits<IntType>::digits10 + 3;
     char str[n + 1] = {'\0'};
