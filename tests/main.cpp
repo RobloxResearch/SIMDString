@@ -28,6 +28,8 @@ SOFTWARE.
 
 char sampleString[44] = "the quick brown fox jumps over the lazy dog";
 size_t sampleStringSize = strlen(sampleString);
+char sampleStringLarge [446] = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
+size_t sampleStringLargeSize = strlen(sampleStringLarge);
 const char* findTestString = "abcabcabcabcabcabcabcdabcabcABCabc";
 const char* findTestString2 = "abcabcabcabcabcabcabcdabcabcabcabcadsf";
 const char* findTestString3 = "abcabcabcabcabcabcabcabcabcABCabc";
@@ -94,12 +96,12 @@ TEST(SIMDStringTest, Construct)
   SIMDString<64> simdstring13 (string1.begin(), string1.end());
   EXPECT_EQ(simdstring13.size(), string1.size());
   EXPECT_STREQ(simdstring13.c_str(), string1.c_str());
-
-  std::istringstream ss{sampleString};
+  
+  std::istringstream ss{sampleStringLarge};
   std::istreambuf_iterator<char> it{ss};
   SIMDString<64> simdstring14{it, std::istreambuf_iterator<char>()};
-  EXPECT_STREQ(simdstring14.c_str(), sampleString);
-  EXPECT_EQ(simdstring14.size(), sampleStringSize);
+  EXPECT_STREQ(simdstring14.c_str(), sampleStringLarge);
+  EXPECT_EQ(simdstring14.size(), sampleStringLargeSize);
 }
 
 TEST(SIMDStringTest, Assign)
@@ -170,6 +172,10 @@ TEST(SIMDStringTest, Assign)
   simdstring0 = string4;
   EXPECT_EQ(simdstring0.size(), string4.size());
   EXPECT_STREQ(simdstring0.c_str(), string4.c_str());
+
+  simdstring0 = "";
+  EXPECT_EQ(simdstring0.size(), 0);
+  EXPECT_STREQ(simdstring0.c_str(), "");
 }
 
 TEST(SIMDStringTest, Access)
@@ -407,6 +413,17 @@ TEST(SIMDStringTest, Append)
   EXPECT_STREQ((std::string(sampleString) + sampleString).c_str(), (SIMDString<64>(sampleString) + sampleString).c_str());
   EXPECT_STREQ((std::string(sampleString) + 'a').c_str(), (SIMDString<64>(sampleString) + 'a').c_str());
   EXPECT_STREQ((std::string(sampleString) + std::string(sampleString)).c_str(), (SIMDString<64>(sampleString) + SIMDString<64>(sampleString)).c_str());
+
+  // append using input iterator
+  std::istringstream ss1{sampleString};
+  std::istreambuf_iterator<char> it1{ss1};
+  std::istringstream ss2{sampleString};
+  std::istreambuf_iterator<char> it2{ss2};
+
+  string1.append(it1, std::istreambuf_iterator<char>());
+  simdstring1.append(it2, std::istreambuf_iterator<char>());
+  EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
 }
 
 TEST(SIMDStringTest, PushPopBack)
@@ -451,7 +468,6 @@ TEST(SIMDStringTest, Insert)
   EXPECT_STREQ(string1.insert(stdPos, 6, 'z').c_str(), simdstring1.insert(simdPos, 6, 'z').c_str());\
   EXPECT_EQ(string1.length(), simdstring1.length());\
 
-
   // insert in the beginning
   INSERT_TESTS(0, 0)
 
@@ -474,6 +490,17 @@ TEST(SIMDStringTest, Insert)
   simdstring1.insert(simdstring1.begin(), '/');
   EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
+
+  // insert using input iterator
+  std::istringstream ss1{sampleString};
+  std::istreambuf_iterator<char> it1{ss1};
+  std::istringstream ss2{sampleString};
+  std::istreambuf_iterator<char> it2{ss2};
+
+  string1.insert(string1.begin() + 6, it1, std::istreambuf_iterator<char>());
+  simdstring1.insert(simdstring1.begin() + 6, it2, std::istreambuf_iterator<char>());
+  EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
 }
 
 TEST(SIMDStringTest, Replace)
@@ -483,6 +510,9 @@ TEST(SIMDStringTest, Replace)
 
   SIMDString<64> simdstring1("0123456789");
   SIMDString<64> simdstring2("abcdefg");
+  
+  std::string string3("abcdefg");
+  SIMDString<64> simdstring3("abcdefg");
 
   #define REPLACE_TESTS(stdPos, simdPos, count, count2)\
   EXPECT_STREQ(string1.replace(stdPos, count, string2).c_str(), simdstring1.replace(simdPos, count, simdstring2).c_str());\
@@ -524,6 +554,10 @@ TEST(SIMDStringTest, Replace)
   // replace at the end, same size
   REPLACE_TESTS(string1.size(), simdstring1.size(), 5, 5)
 
+  // replace buffer to heap
+  EXPECT_STREQ(string3.replace(0, string1.size(), string1).c_str(), simdstring3.replace(0, simdstring1.size(), simdstring1).c_str());
+  EXPECT_EQ(string3.length(), simdstring3.length());
+
   // replace using iterators, range
   string1.replace(string1.begin() + 2, string1.begin() + 6, string2.begin() + 2, string2.begin() + 4);
   simdstring1.replace(simdstring1.begin() + 2, simdstring1.begin() + 6, simdstring2.begin() + 2, simdstring2.begin() + 4);
@@ -550,6 +584,17 @@ TEST(SIMDStringTest, Replace)
   // replace using iterators, char
   string1.replace(string1.begin() + 2, string1.begin() + 6, 6, 'z');
   simdstring1.replace(simdstring1.begin() + 2, simdstring1.begin() + 6, 6, 'z');
+  EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
+  EXPECT_EQ(string1.length(), simdstring1.length());
+
+  // replace using input iterator
+  std::istringstream ss1{sampleString};
+  std::istreambuf_iterator<char> it1{ss1};
+  std::istringstream ss2{sampleString};
+  std::istreambuf_iterator<char> it2{ss2};
+
+  string1.replace(string1.begin() + 2, string1.begin() + 6, it1, std::istreambuf_iterator<char>());
+  simdstring1.replace(simdstring1.begin() + 2, simdstring1.begin() + 6, it2, std::istreambuf_iterator<char>());
   EXPECT_STREQ(string1.c_str(), simdstring1.c_str());
   EXPECT_EQ(string1.length(), simdstring1.length());
 }
@@ -635,7 +680,6 @@ TEST(SIMDStringTest, Swap)
   SIMDString<64> simdstring4(SIMDString<64>(26, 'z'));
   SIMDString<64> simdstring5(SIMDString<64>(sampleString));
   SIMDString<64> simdstring6(SIMDString<64>(200, 'z'));
-
 }
 
 TEST(SIMDStringTest, Find)
@@ -955,6 +999,8 @@ TEST(SIMDStringTest, StartsEndsWith)
   EXPECT_FALSE(simdstring1.starts_with('w'));
   EXPECT_TRUE(simdstring1.ends_with('g'));
   EXPECT_FALSE(simdstring1.ends_with('h'));
+  EXPECT_TRUE(simdstring1.starts_with(sampleString));
+  EXPECT_TRUE(simdstring1.ends_with(sampleString));
 
   const char* s = "hello world";
   EXPECT_FALSE(SIMDString(s + 6).ends_with("hello world"));
@@ -967,7 +1013,6 @@ TEST(SIMDStringTest, Contains)
   EXPECT_TRUE(simdstring1.contains("the"));
   EXPECT_FALSE(simdstring1.contains("woah"));
   EXPECT_FALSE(simdstring1.contains('T'));
-
 }
 
 TEST(SIMDStringTest, CopySubstr)
@@ -1148,6 +1193,21 @@ TEST(SIMDStringTest, Conversions)
   EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
   EXPECT_EQ(simdstring1.size(), string1.size());
 
+  simdstring1 = to_string(123456789012345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890f);
+  string1 = std::to_string(123456789012345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890f);
+  EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
+  EXPECT_EQ(simdstring1.size(), string1.size());
+
+  simdstring1 = to_string(123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567891234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789);
+  string1 = std::to_string(123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567891234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789);
+  EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
+  EXPECT_EQ(simdstring1.size(), string1.size());
+  
+  simdstring1 = to_string(123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567891234567890.1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789L);
+  string1 = std::to_string(123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567891234567890.1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789L);
+  EXPECT_STREQ(simdstring1.c_str(), string1.c_str());
+  EXPECT_EQ(simdstring1.size(), string1.size());
+
   SIMDString<64> simdstring2("-1234567890");
   std::string string2("-1234567890");
 
@@ -1310,4 +1370,3 @@ TEST(SIMDStringTest, RangeLoops){
 
   EXPECT_STREQ(result1.c_str(), result2.c_str());
 }
-

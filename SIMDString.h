@@ -41,7 +41,8 @@ SOFTWARE.
 
 #if defined(USE_SSE_MEMCPY) && USE_SSE_MEMCPY
 #   if defined(__i386__) || defined(_M_IX86) || defined(__x86_64__) || defined(_M_X64)
-#       include <smmintrin.h>
+#       define SSE_x64
+#       include <immintrin.h>
         typedef __m128i u64x2_t;
 #   elif  defined(__ARM_NEON) || defined(__arm__) || defined(_M_ARM)
 #       include <arm_neon.h>
@@ -76,12 +77,9 @@ constexpr size_t SSO_ALIGNMENT = 16;
 TEMPLATE
 class
     /** This inline storage is used when strings are small */
-#   ifdef _MSC_VER
-    __declspec(align(SSO_ALIGNMENT))
-#   else
-    alignas(SSO_ALIGNMENT)
-#   endif
-    SIMDString {
+
+alignas(SSO_ALIGNMENT)
+SIMDString {
 public:
 
     typedef char                                    value_type;
@@ -93,6 +91,8 @@ public:
     typedef ptrdiff_t                               difference_type;
     typedef size_t                                  size_type;
 
+    // We use custom iterators for this function, because otherwise 
+    // SIMDString(char*, 0) is ambiguously overloaded
     template<typename StrType>
     class Const_Iterator {
     public:
@@ -131,8 +131,6 @@ public:
         inline bool operator<= (const Const_Iterator& rhs) const { return m_ptr <= rhs.m_ptr; };  
         inline bool operator> (const Const_Iterator& rhs) const { return m_ptr > rhs.m_ptr; };
         inline bool operator>= (const Const_Iterator& rhs) const { return m_ptr >= rhs.m_ptr; }; 
-
-        value_type* _Unwrapped() const { return this->m_ptr; }
     };
 
     template<typename StrType>
@@ -169,75 +167,82 @@ public:
         using super::operator>=;
         using super::operator<;
         using super::operator>;
-
-        //using _Prevent_inheriting_unwrap = _String_iterator;
-
-        value_type* _Unwrapped() const noexcept { return const_cast<value_type*>(this->m_ptr); }
     };
 
-    typedef Const_Iterator<SIMDString>                      const_iterator;
-    typedef Iterator<SIMDString>                            iterator;
-    typedef std::reverse_iterator<const_iterator>           const_reverse_iterator;
-    typedef std::reverse_iterator<iterator>                 reverse_iterator;
+    typedef Const_Iterator<SIMDString>        const_iterator;
+    typedef Iterator<SIMDString>              iterator;
+    typedef std::reverse_iterator<const_iterator>    const_reverse_iterator;
+    typedef std::reverse_iterator<iterator>          reverse_iterator;
 
 protected:
     // Throw compile time error if INTERNAL_SIZE is not a multiple of SSO_ALIGNMENT
     static_assert(INTERNAL_SIZE % SSO_ALIGNMENT == 0, "SIMDString Internal Size must be a multiple of 16");
 
-    union SIMDString_Union {
+    // Using a union to save space. m_buffer and m_ptr are never used at the same time. 
+    union {
         // This is intentionally char, as it is bytes
-        value_type            m_buffer[INTERNAL_SIZE];
-        pointer               m_ptr;
-    } m_union;
+        char                m_buffer[INTERNAL_SIZE];
+        pointer             m_ptr;
+    };
 
     /** Bytes to but not including '\0' */
     size_type   m_length = 0;
 
-    /** Total size of data() including '\0', or 0 if data() is in a const segment. This is actually
-        implemented in the m_hider.data property in practice. */
-        // size_t          m_allocated;
+
 
         // Uses the empty-base optimization trick from the standard library: http://www.cantrip.org/emptyopt.html,
         // which unfortunately requires slightly obfuscating the code by sticking the
         // m_allocated member into the data property, which we try to minimize the visibility
         // of using the m_allocated macro.
 
-#define m_allocated m_hider.data
-#define m_allocator m_hider
     mutable struct _AllocHider : public Allocator {
         _AllocHider() { }
-        _AllocHider(size_t data) : data(data) { }
-        size_t      data = INTERNAL_SIZE;
-    } m_hider;
+        _AllocHider(size_t allocated) : m_allocated(allocated) { }
+        size_t      m_allocated = INTERNAL_SIZE;
+    } m_allocator;
 
-    inline static void memcpy(void* dst, const void* src, size_t count) {
-        ::memcpy(dst, src, count);
-    }
+    /** Total size of data() including '\0', or 0 if data() is in a const segment. This is actually
+    *   implemented in the m_allocator.m_allocated property in practice.
+    *    
+    *   There are 3 modes you can be in: 
+    *   1. In the constant data segment: m_allocated = 0 (inConst() = true)
+    *   2. In the buffer inline data structure: m_allocated = INTERNAL_SIZE (inBuffer() = true)
+    *   3. In the heap: m_allocated is the size of the allocated data. This will 
+    *                   never be less than INTERNAL_SIZE (inHeap() = true) */
+#   define m_allocatedSize m_allocator.m_allocated
 
     constexpr inline bool inConst() const {
-        return !m_allocated;
+        return !m_allocatedSize;
     }
 
     constexpr inline bool inHeap() const {
-        return m_allocated > INTERNAL_SIZE;
+        return m_allocatedSize > INTERNAL_SIZE;
     }
 
     constexpr inline bool inBuffer() const {
-        return m_allocated == INTERNAL_SIZE;
+        return !(m_allocatedSize - INTERNAL_SIZE);
     }
 
     /** Requires 128-bit alignment */
-    inline static void swapBuffer(void* buf1, void* buf2) {
+    constexpr inline static void swapBuffer(void* buf1, void* buf2) {
 #       if USE_SSE_MEMCPY
             // Can assume that INTERNAL_SIZE % SSO_ALIGNMENT == 0 because of the static assertion on line 201
             u64x2_t* d = reinterpret_cast<u64x2_t*>(buf1);
             u64x2_t* s = reinterpret_cast<u64x2_t*>(buf2);
+            u64x2_t tmp;
 
-            constexpr unsigned int iterations = (unsigned int) (INTERNAL_SIZE / SSO_ALIGNMENT);
-            for (unsigned int i = 0; i < iterations; ++i) {
-                u64x2_t tmp = d[i];
-                d[i] = s[i];
-                s[i] = tmp;
+            unsigned int i = (unsigned int) (INTERNAL_SIZE / SSO_ALIGNMENT);
+            assert(i);
+            while(i--) {
+#               ifdef SSE_x64
+                    tmp = _mm_stream_load_si128(d + i);
+                    d[i] = _mm_load_si128(s + i);
+                    s[i] = _mm_load_si128(&tmp);
+#               else
+                    tmp = d[i];
+                    d[i] = s[i];
+                    s[i] = tmp;
+#               endif
             }
 #       else
             char tmp[INTERNAL_SIZE];
@@ -248,23 +253,37 @@ protected:
     }
 
     /** Requires 128-bit alignment */
-    inline static void memcpyBuffer(void* dst, const void* src, size_t count = INTERNAL_SIZE) {
+    constexpr inline static void memcpyBuffer(void* dst, const void* src, size_t count = INTERNAL_SIZE) {
 #       if USE_SSE_MEMCPY
             // Can assume that INTERNAL_SIZE % SSO_ALIGNMENT == 0 because of the static assertion on line 201
             u64x2_t* d = reinterpret_cast<u64x2_t*>(dst);
-            const u64x2_t* s = reinterpret_cast<const u64x2_t*>(src);
-            unsigned int iterations = (unsigned int) (count/SSO_ALIGNMENT);
-            for (unsigned int i = 0; i < iterations; ++i) {
-                d[i] = s[i];
+
+            #ifdef SSE_x64
+                const u64x2_t* s = reinterpret_cast<const u64x2_t*>(src);
+            #else
+                const uint64_t* s = reinterpret_cast<const uint64_t*>(src);
+            #endif
+
+            size_t i = count / SSO_ALIGNMENT;
+            assert(i);
+            while (i--) {
+#               ifdef SSE_x64
+                    d[i] = _mm_stream_load_si128(s + i);
+#               else
+                    d[i] = vld1q_u64(s + (2 * i));
+#               endif 
             }
 #       else
             ::memcpy(dst, src, count);
 #       endif
     }
 
-    constexpr inline void alloc(size_t b) {
-        if (b > INTERNAL_SIZE) {
-            m_union.m_ptr = m_allocator.allocate(b);
+    constexpr inline pointer alloc(size_t b) {
+        if (b <= INTERNAL_SIZE) {
+            return m_buffer;
+        } else {
+            m_ptr = m_allocator.allocate(b);
+            return m_ptr; 
         }
     }
 
@@ -275,85 +294,107 @@ protected:
 
     /** Choose the number of bytes to allocate to hold a string of length L 
      *  Note: Calling functions are expected to +1 for the null terminator */
-    constexpr inline static size_t chooseAllocationSize(size_t L) {
+    constexpr inline static size_t chooseAllocationSize(size_t requestedSize) {
         // Avoid allocating more than internal size unless required, but always allocate at least the internal size
-        return (L <= INTERNAL_SIZE) ? INTERNAL_SIZE : std::max((size_t)(2 * L + 1), (size_t) (2 * INTERNAL_SIZE + 1));
+        return (requestedSize <= INTERNAL_SIZE) ? INTERNAL_SIZE : std::max((size_t)(2 * requestedSize + 1), (size_t)(2 * INTERNAL_SIZE + 1));
     }
 
-    constexpr void prepareToMutate() {
+    constexpr pointer prepareToMutate() {
         if (inConst()) {
-            const_pointer old = m_union.m_ptr;
-            m_allocated = chooseAllocationSize(m_length + 1);
-            alloc(m_allocated);
-            memcpy(data(), old, m_length + 1);
+            pointer const old = m_ptr;
+            m_allocatedSize = chooseAllocationSize(m_length + 1);
+            // can call alloc and assign directly to m_buffer or m_ptr
+            // because we know the old pointer points to const data
+            pointer dataPtr = (pointer) alloc(m_allocatedSize);
+            ::memcpy(dataPtr, old, m_length + 1);
+            return dataPtr; 
         }
+        return data();
     }
 
     /** Ensure enough bytes are allocated to hold a string of length newSize
-     *  and copies the old string over
+     *  and copies the old string over 
      *  Note: Calling functions are expected to +1 for the null terminator */
-    constexpr void ensureAllocation(size_t newSize) {
-        if (m_allocated < newSize) {
-            bool wasInHeap = inHeap(); 
-            pointer old = data();
-            size_t oldSize = m_allocated;
-            m_allocated = chooseAllocationSize(newSize);
-            pointer newPtr = inBuffer() ? m_union.m_buffer : m_allocator.allocate(m_allocated);
-            memcpy(newPtr, old, m_length);
-            if (inHeap()) m_union.m_ptr = newPtr;
+    constexpr pointer ensureAllocation(size_t newSize) {
+        if (m_allocatedSize < newSize) {
+            const bool wasInHeap = inHeap(); 
+            pointer const old = data();
+            const size_type oldSize = m_allocatedSize;
+            m_allocatedSize = chooseAllocationSize(newSize);
+            pointer newPtr = m_buffer; 
+            if (inBuffer()){
+                ::memcpy(newPtr, old, m_length); 
+            } else {
+                // do not set m_ptr directly because old data could be in m_buffer
+                newPtr = m_allocator.allocate(m_allocatedSize); 
+                ::memcpy(newPtr, old, m_length); 
+                m_ptr = newPtr;
+            }
             if (wasInHeap) free(old, oldSize);
+            return newPtr; 
         }
+        return data();
     }
 
     /** Create a gap in the data for insert/replace.
      *  Re-allocates if necessary
      *  Note: Calling functions are expected to +1 for the null terminator */
-    constexpr void createGap(size_type newSize, size_type count, size_type count2, size_type pos) {
-        if (((m_allocated < newSize) && !(inBuffer() && (newSize < INTERNAL_SIZE))) || inConst()) {
+    constexpr pointer createGap(size_type newSize, size_type count, size_type count2, size_type pos) {
+        if (((m_allocatedSize < newSize) && !(inBuffer() && (newSize < INTERNAL_SIZE))) || inConst()) {
             // Allocate a new string and copy over first n values
-            bool wasInHeap = inHeap(); 
-            pointer old = data();
-            size_type oldSize = m_allocated;
-            m_allocated = chooseAllocationSize(newSize);
-            pointer newPtr = inBuffer() ? m_union.m_buffer : m_allocator.allocate(m_allocated);
-            // copy [old, old + pos) to [newPtr, newPtr + pos)
-            memcpy(newPtr, old, pos);
-            // copy [old + pos + count, old + m_length) to [newPtr + pos + count2, newPtr + newSize)
-            memcpy(newPtr + pos + count2, old + pos + count, m_length - pos - count + 1);
-            if (inHeap()) m_union.m_ptr = newPtr;
+            const bool wasInHeap = inHeap(); 
+            pointer const old = data();
+            const size_type oldSize = m_allocatedSize;
+            m_allocatedSize = chooseAllocationSize(newSize);
+            pointer newPtr = m_buffer;
+            if (inBuffer()) {
+                // copy [old, old + pos) to [newPtr, newPtr + pos)
+                ::memcpy(newPtr, old, pos);
+                // copy [old + pos + count, old + m_length) to [newPtr + pos + count2, newPtr + newSize)
+                ::memcpy(newPtr + pos + count2, old + pos + count, m_length - pos - count + 1);
+            } else {
+                newPtr = m_allocator.allocate(m_allocatedSize); 
+                // copy [old, old + pos) to [newPtr, newPtr + pos)
+                ::memcpy(newPtr, old, pos);
+                // copy [old + pos + count, old + m_length) to [newPtr + pos + count2, newPtr + newSize)
+                ::memcpy(newPtr + pos + count2, old + pos + count, m_length - pos - count + 1);
+                m_ptr = newPtr;
+            }
             if (wasInHeap) { free(old, oldSize); }
-        }
-        else {
+            return newPtr;
+        } else {
             // move [data() + pos + count, data() + m_length) to [data() + pos + count2, data() + newSize)
-            memmove(data() + pos + count2, data() + pos + count, m_length - pos - count + 1);
+            pointer const dataPtr = data();
+            memmove(dataPtr + pos + count2, dataPtr + pos + count, m_length - pos - count + 1);
+            return dataPtr; 
         }
     }
 
     constexpr inline void maybeDeallocate() {
         if (inHeap()) {
             // Free previously allocated data
-            free(m_union.m_ptr, m_allocated);
-            m_allocated = INTERNAL_SIZE;
+            free(m_ptr, m_allocatedSize);
+            m_allocatedSize = INTERNAL_SIZE;
         }
     }
 
     /** Ensure enough bytes are allocated to hold a string of length newSize.
      *  Note: Calling functions are expected to +1 for the null terminator */
-    constexpr inline void maybeReallocate(size_t newSize) {
+    constexpr inline pointer maybeReallocate(size_t newSize) {
         // Don't waste an allocation if the memory already allocated is large enough to hold the new data
-        if (m_allocated && m_allocated >= newSize) {
-            return;
+        if (m_allocatedSize && m_allocatedSize >= newSize) {
+            return data();
         }
 
         // free the old data, if applicable
         if (inHeap()) {
             // Free previously allocated data
-            free(m_union.m_ptr, m_allocated);
+            free(m_ptr, m_allocatedSize);
         }
 
         // allocate memory
-        m_allocated = chooseAllocationSize(newSize);
-        alloc(m_allocated);
+        m_allocatedSize = chooseAllocationSize(newSize);
+        return alloc(m_allocatedSize);
     }
 
     // primary template handles types that have no nested ::iterator_category:
@@ -370,13 +411,19 @@ protected:
     ITERATOR_TRAITS
     inline void m_construct(InputIter first, InputIter last, std::input_iterator_tag t) {
         m_length = 0;
-        // first allocate to buffer
-        m_allocated = INTERNAL_SIZE;
-        alloc(m_allocated);
 
+        // first allocate to buffer
+        m_allocatedSize = INTERNAL_SIZE;
+        while (first != last && m_length < m_allocatedSize) {
+            m_buffer[m_length++] = *first++;
+        }
+
+        // too large for buffer -> allocate to heap
+        ensureAllocation(m_length + 1);
         while (first != last){
-            data()[m_length++] = *first++;
-            if (m_length == m_allocated){
+            // we can use m_ptr here because we know we've maxxed out buffer space
+            m_ptr[m_length++] = *first++;
+            if (m_length == m_allocatedSize){
                 // chooseAllocation will allocate 2x the requested amount
                 ensureAllocation(m_length + 1);
             }
@@ -390,11 +437,16 @@ protected:
     inline void m_construct(InputIter first, InputIter last, std::forward_iterator_tag t) {
         m_length = last - first;
         // Allocate more than needed for fast append
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
 
-        memcpy(data(), first, last);
-        data()[m_length] = '\0';
+        if (inBuffer()){
+            ::memcpy(m_buffer, &*first, last - first);
+            m_buffer[m_length] = '\0';
+        } else {
+            m_ptr = m_allocator.allocate(m_allocatedSize);
+            ::memcpy(m_ptr, &*first, last - first);
+            m_ptr[m_length] = '\0';
+        }
     }
 
     
@@ -403,20 +455,22 @@ protected:
     constexpr SIMDString& m_assign(InputIter first, InputIter last, std::input_iterator_tag t) {
         m_length = 0;
 
-        // Allocate to buffer if inConst
+        // Allocate to buffer first if existing string is inConst
         if (inConst()){
-            m_allocated = INTERNAL_SIZE;
+            m_allocatedSize = INTERNAL_SIZE;
         }
-
+        // don't need to allocate because either the string already has heap allocation or 
+        // we're allocating to the buffer
+        pointer dataPtr = data();
         while (first != last){
-            data()[m_length++] = *first++;
-            if (m_length == m_allocated){
+            dataPtr[m_length++] = *first++;
+            if (m_length == m_allocatedSize){
                 // chooseAllocation will allocate 2x the requested amount
-                ensureAllocation(m_length + 1);
+                dataPtr = ensureAllocation(m_length + 1);
             }
         }
         
-        data()[m_length] = '\0';
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
@@ -425,72 +479,64 @@ protected:
     constexpr SIMDString& m_assign(InputIter first, InputIter last, std::forward_iterator_tag t){
         m_length = last - first;
         //allocate memory if necessary. 
-        maybeReallocate(m_length + 1);
+        pointer dataPtr = maybeReallocate(m_length + 1);
 
         // Clone the other value, putting it in the internal storage if possible
-        memcpy(data(), first, last);
-        data()[m_length] = '\0';
+        ::memcpy(dataPtr, &*first, last - first);
+        dataPtr[m_length] = '\0';
         return *this;
-    }
-
-    // memcpy for iterators
-    ITERATOR_TRAITS
-    inline static void* memcpy(void * dest, InputIter first, InputIter last) {
-        pointer d = static_cast<pointer>(dest);
-        while (first < last) {
-            *d++ = *first++;
-        }
-
-        return dest;
     }
 
 public:
 
     static constexpr size_type npos = size_type(-1);
     
-    SIMDString(std::nullptr_t): m_length(0), m_hider(INTERNAL_SIZE) {
-        m_union.m_buffer[0] = '\0';
+    SIMDString(std::nullptr_t): m_length(0), m_allocator(INTERNAL_SIZE) {
+        m_buffer[0] = '\0';
     }
 
     /** Creates a zero-length string */
-    constexpr inline SIMDString(): m_length(0), m_hider(INTERNAL_SIZE) {
-        m_union.m_buffer[0] = '\0';
+    constexpr inline SIMDString(): m_length(0), m_allocator(INTERNAL_SIZE) {
+        m_buffer[0] = '\0';
     }
 
     /** \param count Copy this many characters.  */
     constexpr SIMDString(size_type count, value_type c) : m_length(count) {
         // Allocate more than needed for fast append
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
-        ::memset((void*) data(), c, m_length);
-        data()[m_length] = '\0';
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
+        if (inBuffer()){ 
+            ::memset((void*) m_buffer, c, m_length);
+            m_buffer[m_length] = '\0';
+        } else {
+            m_ptr = m_allocator.allocate(m_allocatedSize);
+            ::memset((void*) m_ptr, c, m_length);
+            m_ptr[m_length] = '\0';
+        }
     }
 
-    explicit constexpr inline SIMDString(const value_type c): m_length(1), m_hider(INTERNAL_SIZE) {
-        m_union.m_buffer[0] = c;
-        m_union.m_buffer[1] = '\0';
+    explicit constexpr inline SIMDString(const value_type c): m_length(1), m_allocator(INTERNAL_SIZE) {
+        m_buffer[0] = c;
+        m_buffer[1] = '\0';
     }
 
     constexpr SIMDString(const SIMDString& str, size_type pos = 0) {
         m_length = str.m_length - pos;
         if (str.inConst()) {
             // Share this const_seg value
-            m_union.m_ptr = str.m_union.m_ptr + pos;
-            m_allocated = 0;
-        }
-        else {
-            m_allocated = chooseAllocationSize(m_length + 1);
-            // Clone the value, putting it in the internal storage if possible
-            alloc(m_allocated);
+            m_ptr = str.m_ptr + pos;
+            m_allocatedSize = 0;
+        } else {
+            m_allocatedSize = chooseAllocationSize(m_length + 1);
 
+            // Clone the value, putting it in the internal storage if possible
             // memcpyBuffer assumes SSE so this needs to be aligned to SSO_ALIGNMENT 
             // Since INTERNAL_SIZE is a multiple of 2, the compiler will optimize `% SSO_ALIGNMENT` to `& (SSO_ALIGNMENT - 1)`
             if (inBuffer() && str.inBuffer() && !(pos % SSO_ALIGNMENT)) {
-                memcpyBuffer(m_union.m_buffer, str.m_union.m_buffer + pos, INTERNAL_SIZE - pos);
-            }
-            else {
+                memcpyBuffer(m_buffer, str.m_buffer + pos, INTERNAL_SIZE - pos);
+            } else {
+                pointer dataPtr = (pointer) alloc(m_allocatedSize);
                 // + 1 is for the '\0'
-                memcpy(data(), str.data() + pos, m_length + 1);
+                ::memcpy(dataPtr, str.data() + pos, m_length + 1);
             }
         }
     }
@@ -498,28 +544,27 @@ public:
     constexpr SIMDString(const SIMDString& str, size_type pos, size_type count) {
         // cannot point to const string 
         m_length = (count == npos || pos + count >= str.size()) ? str.size() - pos : count;
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
         if (inBuffer() && str.inBuffer() && !(pos % SSO_ALIGNMENT)) {
-            memcpyBuffer(m_union.m_buffer, str.m_union.m_buffer + pos, INTERNAL_SIZE - pos);
-        }
-        else {
+            memcpyBuffer(m_buffer, str.m_buffer + pos, INTERNAL_SIZE - pos);
+            m_buffer[m_length] = '\0';
+        } else {
+            pointer dataPtr = (pointer) alloc(m_allocatedSize);
             // + 1 is for the '\0'
-            memcpy(data(), str.data() + pos, m_length + 1);
+            ::memcpy(dataPtr, str.data() + pos, m_length + 1);
+            dataPtr[m_length] = '\0';
         }
-        data()[m_length] = '\0';
     }
 
     constexpr SIMDString(const_pointer s) : m_length(::strlen(s)) {
-        if (::inConstSegment(s)) {
-            m_union.m_ptr = const_cast<pointer>(s);
-            m_allocated = 0;
-        }
-        else {
+        if (inConstSegment(s)) {
+            m_ptr = const_cast<pointer>(s);
+            m_allocatedSize = 0;
+        } else {
             // Allocate more than needed for fast append
-            m_allocated = chooseAllocationSize(m_length + 1);
-            alloc(m_allocated);
-            memcpy(data(), s, m_length + 1);
+            m_allocatedSize = chooseAllocationSize(m_length + 1);
+            pointer dataPtr = (pointer) alloc(m_allocatedSize);
+            ::memcpy(dataPtr, s, m_length + 1);
         }
     }
 
@@ -527,27 +572,30 @@ public:
         check past the end of s for a null terminator.*/
     constexpr SIMDString(const_pointer s, size_type count) : m_length(count) {
         // Allocate more than needed for fast append
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
-        memcpy(data(), s, m_length);
-        data()[m_length] = '\0';
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
+        
+        pointer const dataPtr = (pointer) alloc(m_allocatedSize);
+        ::memcpy(dataPtr, s, m_length);
+        dataPtr[m_length] = '\0';
     }
 
     constexpr SIMDString(const_pointer s, size_type pos, size_type count)
         : m_length(count)
     {
         // Allocate more than needed for fast append
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
-        memcpy(data(), s + pos, m_length);
-        data()[m_length] = '\0';
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
+        
+        pointer const dataPtr = (pointer) alloc(m_allocatedSize);
+        ::memcpy(dataPtr, s + pos, m_length);
+        dataPtr[m_length] = '\0';
     }
 
-    constexpr SIMDString(SIMDString&& str) noexcept {
+    constexpr SIMDString(SIMDString&& str) noexcept: m_length(0), m_allocator(INTERNAL_SIZE) {
         swap(str);
     }
 
     // These aren't passed by reference because this was the signature on basic_string
+    // https://en.cppreference.com/w/cpp/string/basic_string/basic_string
     ITERATOR_TRAITS
     constexpr SIMDString(InputIter first, InputIter last)  {
         typedef typename std::iterator_traits<InputIter>::iterator_category tag; 
@@ -558,84 +606,78 @@ public:
     explicit constexpr SIMDString(const std::string& str, size_type pos = 0, size_type count = npos) {
         m_length = (count == npos || pos + count >= str.size()) ? str.size() - pos : count;
         // Allocate more than needed for fast append
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
-        memcpy(data(), str.data() + pos, m_length);
-        data()[m_length] = '\0';
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
+        
+        pointer const dataPtr = (pointer) alloc(m_allocatedSize);
+        ::memcpy(dataPtr, str.data() + pos, m_length);
+        dataPtr[m_length] = '\0';
     }
 
     constexpr SIMDString(std::initializer_list<value_type> ilist) : m_length(ilist.size()) {
         // The initializer list points to a list of const elements
         // They can't be moved and they're not null terminated
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
-        memcpy(data(), ilist.begin(), m_length);
-        data()[m_length] = '\0';
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
+        pointer const dataPtr = (pointer) alloc(m_allocatedSize);
+        ::memcpy(dataPtr, ilist.begin(), m_length);
+        dataPtr[m_length] = '\0';
     }
 
     explicit constexpr SIMDString(const std::string_view& sv, size_type pos = 0) : m_length(sv.size() - pos) {
         if (inConstSegment(sv.data() + pos) && sv.data()[pos + m_length] == '\0') {
-            m_union.m_ptr = const_cast<pointer>(sv.data() + pos);
-            m_allocated = 0;
-        }
-        else {
-            // Allocate more than needed for fast append
-            m_allocated = chooseAllocationSize(m_length + 1);
-            alloc(m_allocated);
-            memcpy(data(), sv.data() + pos, m_length);
-            data()[m_length] = '\0';
+            m_ptr = const_cast<pointer>(sv.data() + pos);
+            m_allocatedSize = 0;
+        } else {
+        // Allocate more than needed for fast append
+            m_allocatedSize = chooseAllocationSize(m_length + 1);
+            pointer const dataPtr = (pointer) alloc(m_allocatedSize);
+            ::memcpy(dataPtr, sv.data() + pos, m_length);
+            dataPtr[m_length] = '\0';
         }
     }
 
     constexpr SIMDString(const std::string_view& sv, size_type pos, size_type count) {
         m_length = (count == npos || pos + count >= sv.size()) ? sv.size() - pos : count;
         // Allocate more than needed for fast append
-        m_allocated = chooseAllocationSize(m_length + 1);
-        alloc(m_allocated);
-        memcpy(data(), sv.data() + pos, m_length);
-        data()[m_length] = '\0';
+        m_allocatedSize = chooseAllocationSize(m_length + 1);
+        pointer const dataPtr = (pointer) alloc(m_allocatedSize);
+        ::memcpy(dataPtr, sv.data() + pos, m_length);
+        dataPtr[m_length] = '\0';
     }
 
     ~SIMDString() {
         if (inHeap()) {
             // Note that this calls the method, not ::free 
-            free(m_union.m_ptr, m_allocated);
+            free(m_ptr, m_allocatedSize);
         }
     }
 
     constexpr SIMDString& operator=(const SIMDString& str) {
         if (&str == this) {
             return *this;
-        }
-        // Constant storage
-        else if (str.inConst()) {
+        } else if (str.inConst()) { // Constant storage
             maybeDeallocate();
             // Share this const_seg value
-            m_union.m_ptr = str.m_union.m_ptr;
+            m_ptr = str.m_ptr;
             m_length = str.m_length;
-            m_allocated = str.m_allocated;
-
-        }
-        // Buffer and heap storage
-        else {
+            m_allocatedSize = str.m_allocatedSize;
+        } else { // Buffer and heap storage
             m_length = str.m_length;
 
             // free and/or allocate memory if necessary. 
-            maybeReallocate(m_length + 1);
+            pointer dataPtr = maybeReallocate(m_length + 1);
 
             // Clone the other value, putting it in the internal storage if possible
             if (inBuffer() && str.inBuffer()) {
-                memcpyBuffer(m_union.m_buffer, str.m_union.m_buffer);
-            }
-            else {
-                memcpy(data(), str.data(), m_length + 1);
+                memcpyBuffer(dataPtr, str.m_buffer);
+            } else {
+                ::memcpy(dataPtr, str.data(), m_length + 1);
             }
         }
 
         return *this;
     }
 
-    constexpr SIMDString& operator=(SIMDString&& str) {
+    constexpr SIMDString& operator=(SIMDString&& str) noexcept {
         swap(str);
         str.clear();
         return *this;
@@ -644,27 +686,26 @@ public:
     constexpr SIMDString& operator=(const_pointer s) {
         m_length = ::strlen(s);
 
-        if (::inConstSegment(s)) {
+        if (inConstSegment(s)) {
             maybeDeallocate();
             // Share this const_seg value
-            m_union.m_ptr = const_cast<pointer>(s);
-            m_allocated = 0;
-        }
-        else {
+            m_ptr = const_cast<pointer>(s);
+            m_allocatedSize = 0;
+        } else {
             // free and/or allocate memory if necessary. 
-            maybeReallocate(m_length + 1);
+            pointer const dataPtr = maybeReallocate(m_length + 1);
             // Clone the other value, putting it in the internal storage if possible
-            memcpy(data(), s, m_length + 1);
+            ::memcpy(dataPtr, s, m_length + 1);
         }
         return *this;
     }
 
     constexpr SIMDString& operator=(const std::string& str) {
         m_length = str.length();
-        // free and/or allocate memory if necessary.
-        maybeReallocate(m_length + 1);
+        // free and/or allocate memory if necessary. 
+        pointer const dataPtr = maybeReallocate(m_length + 1);
         // Clone the other value, putting it in the internal storage if possible
-        memcpy(data(), str.data(), m_length + 1);
+        ::memcpy(dataPtr, str.data(), m_length + 1);
 
         return *this;
     }
@@ -672,10 +713,10 @@ public:
     constexpr SIMDString& operator=(const std::string&& str)
     {
         m_length = str.length();
-        // free and/or allocate memory if necessary.
-        maybeReallocate(m_length + 1);
+        // free and/or allocate memory if necessary. 
+        pointer const dataPtr = maybeReallocate(m_length + 1);
         // Clone the other value, putting it in the internal storage if possible
-        memcpy(data(), str.data(), m_length + 1);
+        ::memcpy(dataPtr, str.data(), m_length + 1);
 
         return *this;
     }
@@ -683,10 +724,9 @@ public:
     constexpr SIMDString& operator=(const value_type c) {
         maybeDeallocate();
         m_length = 1;
-        m_allocated = INTERNAL_SIZE;
-        alloc(m_allocated);
-        data()[0] = c;
-        data()[1] = '\0';
+        m_allocatedSize = INTERNAL_SIZE;
+        m_buffer[0] = c;
+        m_buffer[1] = '\0';
         return *this;
     }
 
@@ -694,11 +734,10 @@ public:
         m_length = ilist.size();
 
         // free and/or allocate memory if necessary. 
-        maybeReallocate(m_length + 1);
-        
+        pointer const dataPtr = maybeReallocate(m_length + 1);
         // Clone the other value, putting it in the internal storage if possible
-        memcpy(data(), ilist.begin(), m_length);
-        data()[m_length] = '\0';
+        ::memcpy(dataPtr, ilist.begin(), m_length);
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
@@ -706,11 +745,10 @@ public:
         m_length = sv.size();
 
         // free and/or allocate memory if necessary. 
-        maybeReallocate(m_length + 1);
-
-        // have to copy over because string_view doesn't use null terminators
-        memcpy(data(), sv.data(), m_length);
-        data()[m_length] = '\0';
+        pointer const dataPtr = maybeReallocate(m_length + 1);
+        // Clone the other value, putting it in the internal storage if possible
+        ::memcpy(dataPtr, sv.data(), m_length);
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
@@ -723,27 +761,24 @@ public:
         if (str.inConst() && pos + copy_len == str.size()) {
             maybeDeallocate();
             // Share this const_seg value
-            m_union.m_ptr = str.m_union.m_ptr + pos;
+            m_ptr = str.m_ptr + pos;
             m_length = copy_len;
-            m_allocated = str.m_allocated;
-        }
-        // Buffer and heap storage or a substring
-        else {
+            m_allocatedSize = str.m_allocatedSize;
+        } else { // Buffer and heap storage or a substring
             m_length = copy_len;
             // free and/or allocate memory if necessary. 
-            maybeReallocate(m_length + 1);
+            pointer const dataPtr = maybeReallocate(m_length + 1);
 
             // Clone the other value, putting it in the internal storage if possible
             // memcpyBuffer assumes SSE this needs be aligned to SSO_ALIGNMENT 
             // Since INTERNAL_SIZE is a multiple of 2, the compiler will optimize `% SSO_ALIGNMENT` to `& (SSO_ALIGNMENT - 1)`
             if (inBuffer() && str.inBuffer() && !(pos % SSO_ALIGNMENT)) {
                 // can copy over entire buffer because the string gets null terminated anyway
-                memcpyBuffer(m_union.m_buffer, str.m_union.m_buffer + pos, INTERNAL_SIZE - pos);
+                memcpyBuffer(dataPtr, str.m_buffer + pos, INTERNAL_SIZE - pos);
+            } else {
+                ::memcpy(dataPtr, str.data() + pos, m_length);
             }
-            else {
-                memcpy(data(), str.data() + pos, m_length);
-            }
-            data()[m_length] = '\0';
+            dataPtr[m_length] = '\0';
         }
         return *this;
     }
@@ -751,11 +786,10 @@ public:
     constexpr SIMDString& assign(const_pointer s, size_type count) {
         m_length = count;
         // free and/or allocate memory if necessary. 
-        maybeReallocate(m_length + 1);
-
+        pointer const dataPtr = maybeReallocate(m_length + 1);
         // Clone the other value, putting it in the internal storage if possible
-        memcpy(data(), s, m_length);
-        data()[m_length] = '\0';
+        ::memcpy(dataPtr, s, m_length);
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
@@ -766,11 +800,10 @@ public:
     constexpr SIMDString& assign(size_type count, const value_type c) {
         m_length = count;
         // free and/or allocate memory if necessary. 
-        maybeReallocate(m_length + 1);
-
+        pointer const dataPtr = maybeReallocate(m_length + 1);
         // Clone the other value, putting it in the internal storage if possible
-        ::memset(data(), c, m_length);
-        data()[m_length] = '\0';
+        ::memset(dataPtr, c, m_length);
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
@@ -798,13 +831,12 @@ public:
             return (*this = sv);
         }
         m_length = (count == npos || pos + count >= sv.size()) ? sv.size() - pos : count;
-        
+            
         // free and/or allocate memory if necessary. 
-        maybeReallocate(m_length + 1);
-        
-        // have to copy over because string_view doesn't use null terminators
-        memcpy(data(), sv.data(), m_length);
-        data()[m_length] = '\0';
+        pointer const dataPtr = maybeReallocate(m_length + 1);
+        // Clone the other value, putting it in the internal storage if possible
+        ::memcpy(dataPtr, sv.data(), m_length);
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
@@ -818,21 +850,25 @@ public:
         return data();
     }
 
+    /**
+     * data: https://github.com/llvm-mirror/libcxx/blob/78d6a7767ed57b50122a161b91f59f19c9bd0d19/include/string#L1242
+     * __get_pointer: https://github.com/llvm-mirror/libcxx/blob/78d6a7767ed57b50122a161b91f59f19c9bd0d19/include/string#L1513
+     */
     constexpr const_pointer data() const noexcept {
-        return inBuffer() ?  m_union.m_buffer : m_union.m_ptr;
+        return inBuffer() ?  m_buffer : m_ptr;
     }
 
     constexpr pointer data() noexcept {
-        return inBuffer() ?  m_union.m_buffer : m_union.m_ptr;
+        return inBuffer() ?  m_buffer : m_ptr;
     }
 
     constexpr const_reference operator[](size_type x) const {
-        assert(x < m_length&& x >= 0); // "Index out of bounds");
+        assert(x < m_length && x >= 0); // "Index out of bounds");
         return data()[x];
     }
 
     constexpr reference operator[](size_type x) {
-        assert(x < m_length&& x >= 0); // "Index out of bounds");
+        assert(x < m_length && x >= 0); // "Index out of bounds");
         prepareToMutate();
         return data()[x];
     }
@@ -849,24 +885,28 @@ public:
     }
 
     constexpr const_reference front() const {
-        assert(data()); // "Empty string"
-        return data()[0];
+        const_pointer dataPtr = data(); 
+        assert(dataPtr); // "Empty string"
+        return dataPtr[0];
     }
 
     constexpr reference front() {
         assert(data()); // "Empty string"
         prepareToMutate();
+        // call data again because it's a mutated string
         return data()[0];
     }
 
     constexpr const_reference back() const {
-        assert(data()); // "Empty string"
-        return data()[m_length - 1];
+        const_pointer dataPtr = data(); 
+        assert(dataPtr); // "Empty string"
+        return dataPtr[m_length - 1];
     }
 
     constexpr reference back() {
         assert(data()); // "Empty string"
         prepareToMutate();
+        // call data again because it's a mutated string
         return data()[m_length - 1];
     }
 
@@ -941,12 +981,10 @@ public:
     constexpr size_type capacity() const {
         if (inBuffer()) {
             return INTERNAL_SIZE;
-        }
-        else if (inConst()) {
+        } else if (inConst()) {
             return m_length;
-        }
-        else {
-            return m_allocated; // 0 when isConst() is true
+        } else {
+            return m_allocatedSize; // 0 when isConst() is true
         }
     }
 
@@ -958,24 +996,28 @@ public:
         return (m_length == 0);
     }
 
+    /* Almost the same as ensureAllocation, except this one 
+     * sets allocation to the passed in length exactly while
+     * ensureAllocation uses chooseAllocationSize
+     */
     constexpr void reserve(size_type newLength = 0) {
-        if (newLength > m_allocated) {
+        if (newLength > m_allocatedSize) {
             // Does not fit in buffer, reserve more space in Heap
             if (newLength > INTERNAL_SIZE) {
                 // Need heap allocation
-                bool wasInHeap = inHeap();
+                const bool wasInHeap = inHeap();
                 pointer old = data();
-                size_t oldSize = m_allocated;
+                size_t oldSize = m_allocatedSize;
 
-                m_allocated = newLength + 1;
-                pointer newPtr = inBuffer() ? m_union.m_buffer : m_allocator.allocate(m_allocated);
-                memcpy(newPtr, old, m_length + 1);
-                if (inHeap()) m_union.m_ptr = newPtr;
+                m_allocatedSize = newLength + 1;
+                pointer newPtr = m_allocator.allocate(m_allocatedSize);
+                ::memcpy(newPtr, old, m_length + 1);
+                m_ptr = newPtr; 
                 if (wasInHeap) free(old, oldSize);
             } else if (inConst()) {
                 // copy to the internal buffer.
-                memcpy(m_union.m_buffer, data(), m_length + 1);
-                m_allocated = INTERNAL_SIZE;
+                ::memcpy(m_buffer, data(), m_length + 1);
+                m_allocatedSize = INTERNAL_SIZE;
             } else {
                 // Should already have been in the internal buffer and fitting
                 assert(false); // "Should not reach this case if the new length is less than the internal buffer"
@@ -985,12 +1027,16 @@ public:
 
     constexpr void shrink_to_fit() {
         // only shrink if heap allocation
-        if (inHeap() && (m_allocated != m_length + 1)) {
-            pointer old = data();
-            size_type oldSize = m_allocated;
-            m_allocated = chooseAllocationSize(m_length + 1);
-            alloc(m_allocated);
-            memcpy(data(), old, m_length + 1);
+        if (inHeap() && (m_allocatedSize != m_length + 1)) {
+            pointer const old = data();
+            const size_type oldSize = m_allocatedSize;
+            m_allocatedSize = chooseAllocationSize(m_length + 1);
+            if (inBuffer()){
+                ::memcpy(m_buffer, old, m_length + 1);
+            } else {
+                m_ptr = m_allocator.allocate(m_allocatedSize); 
+                ::memcpy(m_buffer, old, m_length + 1);
+            }
             free(old, oldSize);
         }
     }
@@ -1085,9 +1131,9 @@ public:
 
     constexpr void resize(size_type count, value_type c = '\0') {
         if (count < m_length) {
-            data()[m_length = count] = '\0';
-        }
-        else if (count > m_length) {
+            m_length = count; 
+            data()[m_length] = '\0';
+        } else if (count > m_length) {
             append(count - m_length, c);
         }
     }
@@ -1096,7 +1142,7 @@ public:
         size_type cpyCount = pos + count > m_length ? m_length - pos : count;
 
         // the resulting string of copy is not null terminated
-        memcpy(dest, data() + pos, cpyCount);
+        ::memcpy(dest, data() + pos, cpyCount);
         return cpyCount;
     }
 
@@ -1129,20 +1175,19 @@ public:
 
         assert(pos <= m_length && max_size() >= m_length + sizeDiff); // "Index out of bounds");
 
-
         if (sizeDiff > 0) { // count < count2 -> insert
             size_type newSize = m_length + sizeDiff + 1;
-            createGap(newSize, count, count2, pos); 
-            memcpy(data() + pos, s, count2);
+            pointer const dataPtr = createGap(newSize, count, count2, pos); 
+            ::memcpy(dataPtr + pos, s, count2);
             m_length += sizeDiff;
         } else if (sizeDiff < 0) { // count > count2 
-            prepareToMutate();
-            memcpy(data() + pos, s, count2);
-            memmove(data() + pos + count2, data() + pos + count, m_length - pos - count + 1);
+            pointer const dataPtr = prepareToMutate();
+            ::memcpy(dataPtr + pos, s, count2);
+            memmove(dataPtr + pos + count2, dataPtr + pos + count, m_length - pos - count + 1);
             m_length += sizeDiff;
         } else {
-            prepareToMutate();
-            memcpy(data() + pos, s, count2);
+            pointer const dataPtr = prepareToMutate();
+            ::memcpy(dataPtr + pos, s, count2);
         }
         return (*this);
     }
@@ -1156,34 +1201,8 @@ public:
 
     ITERATOR_TRAITS
     constexpr SIMDString& replace(const_iterator first, const_iterator last, InputIter first2, InputIter last2) {
-        if (last == end()) {
-            return append(first, last);
-        }
-
-        size_type count = last > end() ? end() - first : last - first;
-        size_type count2 = last2 - first2;
-        size_type pos = first - begin();
-        long sizeDiff = (long) (count2 - count);
-
-        assert(first <= end() && max_size() >= m_length + sizeDiff); // "Index out of bounds");
-        
-        if (sizeDiff > 0) { // count < count2 -> insert
-            size_type newSize = m_length + sizeDiff + 1;
-            createGap(newSize, count, count2, pos); 
-            memcpy(data() + pos, first2, last2);
-            m_length += sizeDiff;
-        }
-        else if (sizeDiff < 0) { // count > count2 
-            prepareToMutate();
-            memcpy(data() + pos, first2, last2);
-            memmove(data() + pos + count2, data() + pos + count, m_length - pos - count + 1);
-            m_length += sizeDiff;
-        }
-        else {
-            prepareToMutate();
-            memcpy(data() + pos, first2, last2);
-        }
-        return (*this);
+        const SIMDString secondString (first2, last2); 
+        return replace(first - begin(), last - first, secondString.data(), secondString.size());
     }
 
     constexpr SIMDString& replace(size_type pos, size_type count, const_pointer s) {
@@ -1214,20 +1233,17 @@ public:
         // count < count2
         if (sizeDiff > 0) { 
             size_type newSize = m_length + sizeDiff + 1;
-            createGap(newSize, count, count2, pos); 
-            ::memset(data() + pos, c, count2);
+            pointer const dataPtr = createGap(newSize, count, count2, pos); 
+            ::memset(dataPtr + pos, c, count2);
             m_length += sizeDiff;
-        }
-        // count > count2 
-        else if (sizeDiff < 0) {
-            prepareToMutate();
-            ::memset(data() + pos, c, count2);
-            memmove(data() + pos + count2, data() + pos + count, m_length - pos - count + 1);
+        } else if (sizeDiff < 0) { // count > count2 
+            pointer const dataPtr = prepareToMutate();
+            ::memset(dataPtr + pos, c, count2);
+            ::memmove(dataPtr + pos + count2, dataPtr + pos + count, m_length - pos - count + 1);
             m_length += sizeDiff;
-        }
-        else {
-            prepareToMutate();
-            ::memset(data() + pos, c, count2);
+        } else {
+            pointer const dataPtr = prepareToMutate();
+            ::memset(dataPtr + pos, c, count2);
         }
         return (*this);
     }
@@ -1270,7 +1286,7 @@ public:
     constexpr void clear() {
         if (inConst()) {
             // switch to inBuffer
-            m_allocated = INTERNAL_SIZE;
+            m_allocatedSize = INTERNAL_SIZE;
         }
         m_length = 0;
         *data() = '\0';
@@ -1284,20 +1300,19 @@ public:
         if ((pos == 0) && (count == m_length)) {
             // Optimize erasing the entire string
             clear();
-        }
-        else if (count > 0) {
+        } else if (count > 0) {
             if (inConst()) {
-                const_pointer old = m_union.m_ptr;
-                m_allocated = chooseAllocationSize(m_length - count + 1);
-                alloc(m_allocated);
+                pointer const old = m_ptr;
+                m_allocatedSize = chooseAllocationSize(m_length - count + 1);
+                pointer const dataPtr = (pointer) alloc(m_allocatedSize);
                 // copy over [old, old + pos)
-                memcpy(data(), old, pos);
+                ::memcpy(dataPtr, old, pos);
                 // copy over [old + pos + count, old + m_length] <- includes 0
-                memcpy(data() + pos, old + pos + count, m_length - (pos + count) + 1);
-            }
-            else {
+                ::memcpy(dataPtr + pos, old + pos + count, m_length - (pos + count) + 1);
+            } else {
                 // move [old + pos + count, old + m_length] up by count
-                memmove(data() + pos, data() + pos + count, m_length - (pos + count) + 1);
+                pointer const dataPtr = data();
+                memmove(dataPtr + pos, dataPtr + pos + count, m_length - (pos + count) + 1);
             }
             m_length -= count;
         }
@@ -1306,37 +1321,39 @@ public:
     }
 
     constexpr iterator erase(iterator pos) {
-        size_type n = pos - data();
+        const_pointer dataPtr = data(); 
+        size_type n = pos - dataPtr;
         erase(n, 1);
-        return iterator(data() + n);
+        // call data() again because state may have changed
+        return iterator(dataPtr + n);
     }
 
     constexpr iterator erase(iterator first, iterator last) {
-        size_type n = first - data();
+        const_pointer dataPtr = data(); 
+        size_type n = first - dataPtr;
         size_type count = last - first;
         if (!n && count == m_length) {
             clear();
-        }
-        else {
+        } else {
             erase(n, count);
         }
-        return iterator(data() + n);
+        return iterator(dataPtr + n);
     }
 
     constexpr inline friend SIMDString operator+(const SIMDString& lhs, const SIMDString& rhs) {
         SIMDString result;
         result.m_length = lhs.m_length + rhs.m_length;
-        result.m_allocated = chooseAllocationSize(result.m_length + 1);
-        result.alloc(result.m_allocated);
+        result.m_allocatedSize = chooseAllocationSize(result.m_length + 1);
         
         if (result.inBuffer() && lhs.inBuffer()) {
-            memcpyBuffer(result.m_union.m_buffer, lhs.m_union.m_buffer);
-        }
-        else {
-            memcpy(result.data(), lhs.data(), lhs.m_length);
+            memcpyBuffer(result.m_buffer, lhs.m_buffer);
+            ::memcpy(result.m_buffer + lhs.m_length, rhs.data(), rhs.m_length + 1);
+        } else {
+            pointer const resultData = (pointer) result.alloc(result.m_allocatedSize); 
+            ::memcpy(resultData, lhs.data(), lhs.m_length);
+            ::memcpy(resultData + lhs.m_length, rhs.data(), rhs.m_length + 1);
         }
 
-        memcpy(result.data() + lhs.m_length, rhs.data(), rhs.m_length + 1);
         return std::move(result);
     }
 
@@ -1348,36 +1365,38 @@ public:
         const size_type L(::strlen(rhs));
         SIMDString result;
         result.m_length = lhs.m_length + L;
-        result.m_allocated = chooseAllocationSize(result.m_length + 1);
-        result.alloc(result.m_allocated);
+        result.m_allocatedSize = chooseAllocationSize(result.m_length + 1);
 
         // Copy this to output string
         if (result.inBuffer() && lhs.inBuffer()) {
-            memcpyBuffer(result.m_union.m_buffer, lhs.m_union.m_buffer);
-        }
-        else {
-            memcpy(result.data(), lhs.data(), lhs.m_length);
+            memcpyBuffer(result.m_buffer, lhs.m_buffer);
+            ::memcpy(result.m_buffer, lhs.data(), lhs.m_length);
+            ::memcpy(result.m_buffer + lhs.m_length, rhs, L + 1);
+        } else {
+            pointer const resultData = (pointer) result.alloc(result.m_allocatedSize);
+            ::memcpy(resultData, lhs.data(), lhs.m_length);
+            ::memcpy(resultData + lhs.m_length, rhs, L + 1);
         }
 
         // Copy s to output string
-        memcpy(result.data() + lhs.m_length, rhs, L + 1);
         return std::move(result);
     }
 
     constexpr inline friend SIMDString operator+(const SIMDString& lhs, const value_type rhs) {
         SIMDString result;
         result.m_length = lhs.m_length + 1;
-        result.m_allocated = chooseAllocationSize(result.m_length + 1);
-        result.alloc(result.m_allocated);
+        result.m_allocatedSize = chooseAllocationSize(result.m_length + 1);
 
         if (result.inBuffer() && lhs.inBuffer()) {
-            memcpyBuffer(result.m_union.m_buffer, lhs.m_union.m_buffer);
+            memcpyBuffer(result.m_buffer, lhs.m_buffer);
+            result.m_buffer[result.m_length - 1] = rhs;
+            result.m_buffer[result.m_length] = '\0';
+        } else {
+            pointer const resultData = (pointer) result.alloc(result.m_allocatedSize);
+            ::memcpy(resultData, lhs.data(), lhs.m_length);
+            resultData[result.m_length - 1] = rhs;
+            resultData[result.m_length] = '\0';
         }
-        else {
-            memcpy(result.data(), lhs.data(), lhs.m_length);
-        }
-        result.data()[result.m_length - 1] = rhs;
-        result.data()[result.m_length] = '\0';
         return std::move(result);
     }
 
@@ -1385,19 +1404,19 @@ public:
         const size_type L(::strlen(lhs));
         SIMDString result;
         result.m_length = rhs.m_length + L;
-        result.m_allocated = chooseAllocationSize(result.m_length + 1);
-        result.alloc(result.m_allocated);
+        result.m_allocatedSize = chooseAllocationSize(result.m_length + 1);
+        pointer const resultData = (pointer) result.alloc(result.m_allocatedSize);
 
         // Copy s to output string
-        memcpy(result.data(), lhs, L);
-        memcpy(result.data() + L, rhs.data(), rhs.m_length + 1);
+        ::memcpy(resultData, lhs, L);
+        ::memcpy(resultData + L, rhs.data(), rhs.m_length + 1);
 
         return std::move(result);
     }
 
     constexpr friend SIMDString operator+(const value_type lhs, const SIMDString& rhs) {
         SIMDString result(rhs.m_length + 1, lhs);
-        memcpy(result.data() + 1, rhs.data(), rhs.m_length + 1);
+        ::memcpy(result.data() + 1, rhs.data(), rhs.m_length + 1);
         return std::move(result);
     }
 
@@ -1426,24 +1445,25 @@ public:
     }
 
     constexpr SIMDString& operator+=(const SIMDString& str) {
-        ensureAllocation(m_length + str.m_length + 1);
-        memcpy(data() + m_length, str.data(), str.m_length + 1);
+        pointer dataPtr = ensureAllocation(m_length + str.m_length + 1);
+        ::memcpy(dataPtr + m_length, str.data(), str.m_length + 1);
         m_length += str.m_length;
         return *this;
     }
 
     constexpr SIMDString& operator+=(const value_type c) {
         // +1 for c, +1 for null operator
-        ensureAllocation(m_length + 2);
-        data()[m_length] = c;
-        data()[++m_length] = '\0';
+        pointer const dataPtr = ensureAllocation(m_length + 2);
+        dataPtr[m_length++] = c;
+        dataPtr[m_length] = '\0';
         return *this;
     }
 
     constexpr SIMDString& operator+=(const_pointer s) {
         const size_type t = ::strlen(s);
-        ensureAllocation(m_length + t + 1);
-        memcpy(data() + m_length, s, t + 1);
+        
+        pointer dataPtr = ensureAllocation(m_length + t + 1); 
+        ::memcpy(dataPtr + m_length, s, t + 1);
         m_length += t;
         return *this;
     }
@@ -1466,9 +1486,9 @@ public:
 
     constexpr SIMDString& append(const SIMDString& str, size_type pos, size_type count = npos) {
         size_type copy_len = (count == npos || pos + count >= str.size()) ? str.size() - pos : count;
-        ensureAllocation(m_length + copy_len + 1);
-        memcpy(data() + m_length, str.data() + pos, copy_len);
-        data()[m_length += copy_len] = '\0';
+        pointer const dataPtr = ensureAllocation(m_length + copy_len + 1);
+        ::memcpy(dataPtr + m_length, str.data() + pos, copy_len);
+        dataPtr[m_length += copy_len] = '\0';
         return *this;
     }
 
@@ -1477,16 +1497,16 @@ public:
     }
 
     constexpr SIMDString& append(size_type count, value_type c) {
-        ensureAllocation(m_length + count + 1);
-        ::memset(data() + m_length, c, count);
-        data()[m_length += count] = '\0';
+        pointer const dataPtr = ensureAllocation(m_length + count + 1);
+        ::memset(dataPtr + m_length, c, count);
+        dataPtr[m_length += count] = '\0';
         return *this;
     }
 
     constexpr SIMDString& append(const_pointer s, size_type t) {
-        ensureAllocation(m_length + t + 1);
-        memcpy(data() + m_length, s, t);
-        data()[m_length += t] = '\0';
+        pointer const dataPtr = ensureAllocation(m_length + t + 1);
+        ::memcpy(dataPtr + m_length, s, t);
+        dataPtr[m_length += t] = '\0';
         return *this;
     }
 
@@ -1496,11 +1516,8 @@ public:
 
     ITERATOR_TRAITS
     constexpr SIMDString& append(InputIter first, InputIter last) {
-        size_type t = last - first;
-        ensureAllocation(m_length + t + 1);
-        memcpy(data() + m_length, first, last);
-        data()[m_length += t] = '\0';
-        return *this;
+        const SIMDString secondString(first, last);
+        return this->append(secondString);
     }
 
     constexpr SIMDString& append(std::initializer_list<value_type> ilist) {
@@ -1516,40 +1533,40 @@ public:
     }
 
     constexpr void swap(SIMDString& str) {
-        std::swap<size_type>(m_allocated, str.m_allocated);
+        std::swap<size_type>(m_allocatedSize, str.m_allocatedSize);
         std::swap<Allocator>(m_allocator, str.m_allocator);
         std::swap<size_type>(m_length, str.m_length);
-        std::swap<SIMDString_Union>(m_union, str.m_union); 
+        swapBuffer(m_buffer, str.m_buffer); 
     }
 
     constexpr bool starts_with(value_type c) const {
-        return m_length > 0 && *m_data == c;
+        return m_length > 0 && *data() == c;
     }
 
-    constexpr bool starts_with(const value_type* s) const {
+    constexpr bool starts_with(const pointer s) const {
         size_type n = ::strlen(s);
-        return m_length >= n && memcmp(s, m_data, n) == 0;
+        return m_length >= n && memcmp(s, data(), n) == 0;
     }
 
     constexpr bool starts_with(std::string_view sv) const {
-        return m_length >= sv.size() && memcmp(sv.data(), m_data, sv.size()) == 0;
+        return m_length >= sv.size() && memcmp(sv.data(), data(), sv.size()) == 0;
     }
 
     constexpr bool ends_with(value_type c) const {
-        return m_length > 0 && *(m_data + m_length - 1) == c;
+        return m_length > 0 && *(data() + m_length - 1) == c;
     }
 
     constexpr bool ends_with(const_pointer s) const {
         size_type n = ::strlen(s);
-        return m_length >= n && memcmp(s, m_data + m_length - n, n) == 0;
+        return m_length >= n && memcmp(s, data() + m_length - n, n) == 0;
     }
 
     constexpr bool ends_with(std::string_view sv) const {
-        return m_length >= sv.size() && memcmp(sv.data(), m_data + m_length - sv.size(), sv.size()) == 0;
+        return m_length >= sv.size() && memcmp(sv.data(), data() + m_length - sv.size(), sv.size()) == 0;
     }
 
     constexpr SIMDString substr(size_type pos, size_type count = npos) const {
-        assert(pos < m_length); // "Index out of bounds");
+        assert(pos <= m_length); // "Index out of bounds");
         const size_type slen = std::min(m_length - pos, count);
         
         if (slen == 0) return SIMDString();
@@ -1581,8 +1598,9 @@ public:
         if (pos + count > m_length) return npos; 
 
         if (count == 0) return pos;
-
-        const_pointer pFound = static_cast<const_pointer>(memchr(data() + pos, *s, m_length - pos));
+        
+        const_pointer const dataPtr = data();
+        const_pointer pFound = static_cast<const_pointer>(memchr(dataPtr + pos, *s, m_length - pos));
         size_type i = static_cast<size_type>(pFound - data());
 
         while (pFound && (i + count) <= m_length) {
@@ -1590,7 +1608,7 @@ public:
                 return i;
             }
             pFound = static_cast<const_pointer>(memchr(pFound + 1, *s, m_length - i - 1));
-            i = static_cast<size_type>(pFound - data());
+            i = static_cast<size_type>(pFound - dataPtr);
         }
         return npos;
     }
@@ -1598,9 +1616,9 @@ public:
     constexpr size_type find(value_type c, size_type pos = 0) const {
         if (pos >= m_length) return npos;
 
-        const_pointer pFound = (const_pointer)memchr(data() + pos, c, m_length - pos);
-        if (pFound) return static_cast<size_type>(pFound - data());
-        else return npos;
+        const_pointer dataPtr = data(); 
+        const_pointer pFound = (const_pointer) memchr(dataPtr + pos, c, m_length - pos);
+        return pFound? static_cast<size_type>(pFound - dataPtr) : npos; 
     }
 
     constexpr size_type find(const std::string_view& sv, size_type pos = 0) const {
@@ -1620,7 +1638,8 @@ public:
 
         size_type n_1 = count - 1;
         size_type i = std::min(m_length - count, pos);
-        const_pointer leftBound = data() + n_1;
+        const_pointer const dataPtr = data(); 
+        const_pointer leftBound = dataPtr + n_1;
         value_type endVal = *(s + n_1);
 
         if (count == 0) {
@@ -1628,7 +1647,7 @@ public:
         }
 
         do {
-            if (*(leftBound + i) == endVal && !memcmp(data() + i, s, count)) {
+            if (*(leftBound + i) == endVal && !memcmp(dataPtr + i, s, count)) {
                 return i;
             }
         } while (i--);
@@ -1640,8 +1659,9 @@ public:
         if (!m_length) return npos; 
 
         size_type start = pos >= m_length ? m_length - 1 : pos;
+        const_pointer const dataPtr = data(); 
         do {
-            if (data()[start] == c) { return start; }
+            if (dataPtr[start] == c) { return start; }
         } while (start--);
         return npos;
     }
@@ -1654,10 +1674,11 @@ public:
         if (pos >= m_length) return npos;
 
         size_type i = pos;
+        const_pointer const dataPtr = data(); 
 
         do {
             // search for current letter in the string of letters
-            if (memchr(s, *(data() + i), count)) {
+            if (memchr(s, *(dataPtr + i), count)) {
                 return i;
             }
         } while (++i < m_length);
@@ -1685,10 +1706,11 @@ public:
         if (pos >= m_length)  return npos; 
 
         size_type i = pos;
+        const_pointer const dataPtr = data();
 
         do {
             // search for current letter in the string of letters
-            if (!memchr(s, *(data() + i), count)) {
+            if (!memchr(s, *(dataPtr + i), count)) {
                 return i;
             }
         } while (++i < m_length);
@@ -1708,9 +1730,10 @@ public:
         if (pos >= m_length)  return npos; 
 
         size_type i = pos;
+        const_pointer const dataPtr = data(); 
 
         do {
-            if (c != *(data() + i)) {
+            if (c != *(dataPtr + i)) {
                 return i;
             }
         } while (++i < m_length); // do not want to run when i=m_length
@@ -1726,9 +1749,10 @@ public:
         if (!m_length || count > m_length) return npos; 
         // search [data(), data() + pos]
         size_type i = std::min(m_length - 1, pos);
+        const_pointer const dataPtr = data();
 
         do {
-            if (memchr(s, *(data() + i), count)) {
+            if (memchr(s, *(dataPtr + i), count)) {
                 return i;
             }
         } while (i--);
@@ -1756,9 +1780,10 @@ public:
         if (!m_length || count > m_length) return npos; 
         // search [data(), data() + pos]
         size_type i = std::min(m_length - 1, pos);
+        const_pointer const dataPtr = data(); 
 
         do {
-            if (!memchr(s, *(data() + i), count)) {
+            if (!memchr(s, *(dataPtr + i), count)) {
                 return i;
             }
         } while (i--);
@@ -1777,9 +1802,10 @@ public:
     constexpr size_type find_last_not_of(value_type c, size_type pos = npos) const {
         if (!m_length) return npos; 
         size_type i = std::min(m_length - 1, pos);
+        const_pointer const dataPtr = data(); 
 
         do {
-            if (c != *(data() + i)) {
+            if (c != *(dataPtr + i)) {
                 return i;
             }
         } while (i--);
@@ -1805,11 +1831,11 @@ private:
 public:
 
     constexpr int compare(const SIMDString& str) const {
-        if (data() == str.data() && m_length == str.m_length) {
+        const_pointer const dataPtr = data(); 
+        if (dataPtr == str.data() && m_length == str.m_length) {
             return 0;
-        }
-        else {
-            return m_compare(data(), m_length, str.data(), str.m_length);
+        } else {
+            return m_compare(dataPtr, m_length, str.data(), str.m_length);
         }
     }
 
@@ -1952,8 +1978,7 @@ std::ostream& operator<<(std::ostream& os, const SIMDString<INTERNAL_SIZE, Alloc
                         }
                     }
                 }
-		    }
-	        else if (os.rdbuf()->sputn(str.data(), str.size()) != str.size()){
+		    } else if (os.rdbuf()->sputn(str.data(), str.size()) != str.size()){
                 os.setstate(std::ostream::badbit);
             }
 	        os.width(0);
@@ -2231,27 +2256,18 @@ char * uint_to_buffer(char* bufEnd, UIntType value) {
 
 template<size_t INTERNAL_SIZE = 64, class Allocator = ::std::allocator<char>, typename IntType>
 SIMDString<INTERNAL_SIZE, Allocator>  int_to_string(IntType value) {
-    using UIntType = std::make_unsigned_t<IntType>;
-
     const int n = std::numeric_limits<IntType>::digits10 + 3;
     char str[n + 1] = {'\0'};
-    const bool negative = value < 0;
-    const UIntType uValue = negative ? static_cast<UIntType>(~value) + 1u : static_cast<UIntType>(value);
-    
-    char* start  = uint_to_buffer(str + n,uValue);
 
-    if (negative) {
+    if (std::is_unsigned_v<IntType> || value >= 0) {
+        return SIMDString<INTERNAL_SIZE, Allocator>(uint_to_buffer(str + n, value));
+    } else {
+        using UIntType = std::make_unsigned_t<IntType>;
+        char* start  = uint_to_buffer(str + n, static_cast<UIntType>(0 - value));
         *(--start) = '-';
+
+        return SIMDString<INTERNAL_SIZE, Allocator>(start);
     }
-
-    return SIMDString<INTERNAL_SIZE, Allocator>(start);
-}
-
-template<size_t INTERNAL_SIZE = 64, class Allocator = ::std::allocator<char>, typename IntType>
-SIMDString<INTERNAL_SIZE, Allocator>  uint_to_string(IntType value) {
-    const int n = std::numeric_limits<IntType>::digits10 + 3;
-    char str[n + 1] = {'\0'};
-    return SIMDString<INTERNAL_SIZE, Allocator>(uint_to_buffer(str + n, value));
 }
 
 TEMPLATE 
@@ -2271,42 +2287,40 @@ SIMDString<INTERNAL_SIZE, Allocator> to_string(long long value) {
 
 TEMPLATE 
 SIMDString<INTERNAL_SIZE, Allocator> to_string(unsigned int value) {
-    return uint_to_string(value);
+    return int_to_string(value);
 }
 
 TEMPLATE 
 SIMDString<INTERNAL_SIZE, Allocator> to_string(unsigned long value) {
-    return uint_to_string(value);
+    return int_to_string(value);
 }
 
 TEMPLATE 
 SIMDString<INTERNAL_SIZE, Allocator> to_string(unsigned long long value) {
-    return uint_to_string(value);
+    return int_to_string(value);
 }
 
 TEMPLATE 
 SIMDString<INTERNAL_SIZE, Allocator> to_string(float value) {
-    const int n = std::numeric_limits<long double>::max_exponent10 + 20;
-    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type
-        str[std::numeric_limits<double>::max_exponent + std::numeric_limits<double>::max_digits10 + 6];
+    // max digits for exponent in base 10 + max digits for mantissa in base 10 + extra buffer for extraneous symbols [+-01.e+-]
+    const int n = std::numeric_limits<float>::max_exponent10 + std::numeric_limits<float>::max_digits10 + 10;
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type str[n];
     snprintf(str, n, "%f", value);
     return SIMDString<INTERNAL_SIZE, Allocator>(str);
 }
 
 TEMPLATE 
 SIMDString<INTERNAL_SIZE, Allocator> to_string(double value) {
-    const int n = std::numeric_limits<long double>::max_exponent10 + 20;
-    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type
-        str[std::numeric_limits<double>::max_exponent + std::numeric_limits<double>::max_digits10 + 6];
-    snprintf(str, n, "%f", value);
+    const int n = std::numeric_limits<double>::max_exponent10 + std::numeric_limits<double>::max_digits10 + 10;
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type str[n];
+    snprintf(str, n, "%f", value); 
     return SIMDString<INTERNAL_SIZE, Allocator>(str);
 }
 
 TEMPLATE 
 SIMDString<INTERNAL_SIZE, Allocator> to_string(long double value) {
-    const int n = std::numeric_limits<long double>::max_exponent10 + 20;
-    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type
-        str[std::numeric_limits<double>::max_exponent + std::numeric_limits<double>::max_digits10 + 6];
+    const int n = std::numeric_limits<long double>::max_exponent10 + std::numeric_limits<long double>::max_digits10 + 10;
+    typename SIMDString<INTERNAL_SIZE, Allocator>::value_type str[n];
     snprintf(str, n, "%Lf", value);
     return SIMDString<INTERNAL_SIZE, Allocator>(str);
 }
@@ -2334,7 +2348,9 @@ typename SIMDString<INTERNAL_SIZE, Allocator>::iterator end(SIMDString<INTERNAL_
     return str.end();
 }
 
+// undef arguments
+#undef USE_SSE_MEMCPY
 #undef TEMPLATE
 #undef ITERATOR_TRAITS
-#undef m_allocated
-#undef m_allocator
+#undef SSE_x64
+#undef m_allocatedSize
