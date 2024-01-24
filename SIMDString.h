@@ -401,9 +401,15 @@ protected:
     template<class InputIter, class = void>
     static inline constexpr bool is_iterator = false;
 
-    // specialization recognizes types that do have a nested ::iterator_category:
+    // specialization recognizes types that have a nested ::iterator_category
+    // void_t is part of c++17 and up
+#if (__cplusplus < 201703L) && !defined(_MSC_VER)
     template<class InputIter>
-    static inline constexpr bool is_iterator<InputIter, std::void_t<typename std::iterator_traits<InputIter>::iterator_category>> = true;
+    static constexpr bool is_iterator<InputIter, std::__void_t<typename std::iterator_traits<InputIter>::iterator_category>> = true;
+#else 
+    template<class InputIter>
+    static constexpr bool is_iterator<InputIter, std::void_t<typename std::iterator_traits<InputIter>::iterator_category>> = true;
+#endif
 
     #define ITERATOR_TRAITS template<typename InputIter, std::enable_if_t<is_iterator<InputIter>, int> = 0>
 
