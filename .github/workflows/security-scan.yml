@@ -9,4 +9,4 @@ on:
 jobs:
     security:
         name: OSS Security SAST
-        uses: Roblox/security-workflows/.github/workflows/oss-security-sast.yaml@main
+        uses: RobloxResearch/security-workflows/.github/workflows/oss-security-sast.yaml@main
